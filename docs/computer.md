@@ -30,7 +30,7 @@ In the bot's settings under **Advanced**, **Computer** is **Team** or **Private*
 
 - **Team** (the default): bots in the [space](./spaces.md) share one Team Computer, with the same
   files and installed tools. Each bot gets its own screen and browser, and sites you sign in to are
-  carried over to the other bots.
+  carried over to the other bots the next time their browser starts.
 - **Private**: the bot gets a computer of its own. Use it when files or sign-ins must not be shared
   with other bots.
 
