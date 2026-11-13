@@ -1836,7 +1836,8 @@ export const builtinAgentTools: ConnectorTool[] = [
         intent: {
           type: "string",
           enum: ["request", "result", "question", "status", "fyi"],
-          description: "What the recipient should do with this message. Defaults to request.",
+          description:
+            "What the recipient should do with this message. Use request when it should do something or find something out now, including when the user wants its answer about the current state of something; question only asks about work already delegated. Defaults to request.",
         },
       },
       required: ["message"],

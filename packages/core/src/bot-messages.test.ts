@@ -419,6 +419,15 @@ describe("inbound wake prompt", () => {
     expect(prompt).toContain("unless you believe its premise is wrong");
   });
 
+  it("asks a question's recipient to check current state instead of answering from memory", () => {
+    const wake = buildBotMessageWakePrompt({
+      from: bots[0]!,
+      text: "Can you reach the inbox?",
+      intent: "question",
+    });
+    expect(wake).toContain("check it first rather than answering from memory");
+  });
+
   it("leaves an FYI free to go unanswered", () => {
     const wake = buildBotMessageWakePrompt({ from: bots[0]!, text: "Deploy done.", intent: "fyi" });
     expect(wake).not.toContain(BOT_DELIBERATION_GUIDANCE);
