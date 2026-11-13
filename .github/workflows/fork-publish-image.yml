@@ -1,0 +1,29 @@
+name: fork-publish-image
+
+# This fork's own deploys: every push to main publishes ghcr.io/<owner>/rakazo/app:edge and
+# sha-<commit>, which ~/deploy.sh on the server pulls. The upstream repository publishes through
+# ci.yml instead, so this never runs there.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-publish-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository != 'elie222/rakazo'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-server-image.yml
