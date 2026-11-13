@@ -79,7 +79,11 @@ export default function Computer() {
   const windowSize = useWindowDimensions();
   const stacked = stacksAtTextScale(windowSize.fontScale);
   const folds = useFoldRegions();
-  const { botId, name: nameParam } = useLocalSearchParams<{ botId?: string; name?: string }>();
+  const {
+    botId,
+    name: nameParam,
+    control,
+  } = useLocalSearchParams<{ botId?: string; name?: string; control?: string }>();
   const name = displayName(nameParam, t`Bot`);
   const foreground = useAppForeground();
   const {
@@ -209,12 +213,17 @@ export default function Computer() {
     if (computer?.state === "booting" || computer?.state === "suspended") return;
     if (autoBooted.current === botId) return;
     autoBooted.current = botId;
+    // Opened from a bot waiting on the user: go straight into control.
+    if (control === "take") {
+      void openComputer({ takeControl: true });
+      return;
+    }
     void bootComputer({
       takeControl: false,
       showProgress: computer?.state !== "running",
       force: true,
     }).catch(() => undefined);
-  }, [readyBotId, botId, computer?.state, switching]);
+  }, [readyBotId, botId, computer?.state, switching, control]);
 
   const reloadScreen = useCallback(async () => {
     await refresh().catch(() => undefined);

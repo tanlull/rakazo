@@ -29,7 +29,7 @@ export function takeoverResumeFromRelease(reason: unknown): {
   return {
     checkpoint: "takeover",
     promptNote:
-      "The user handed the computer back. Continue using the current screen state. Do not request takeover again for this same step.",
+      "The user handed the computer back. Look at the screen first, then carry on with the user's original request without asking them to confirm in chat. Do not request takeover again for this same step; if it still is not done, say exactly what is missing.",
   };
 }
 
