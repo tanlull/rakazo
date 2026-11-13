@@ -50,6 +50,19 @@ function routineNextRunIsNear(nextRunAt: Date | null, retryAt: number): boolean 
 }
 
 /**
+ * Whether a routine run queued now may manage other bots: a person saved the prompt it carries,
+ * here and not through a bot, and it runs as that person. A watch's note is outside content.
+ * Read under the routine's row lock, with the prompt the run takes.
+ */
+export function ownerRoutinePrompt(
+  routine: { promptByOwner: boolean; userId: string },
+  runUserId: string,
+  watchNote: boolean,
+): boolean {
+  return routine.promptByOwner && routine.userId === runUserId && !watchNote;
+}
+
+/**
  * Queue one later retry of a routine run that a transient model error stopped before it posted
  * a message or called a tool. Effects are keyed to their run, so a retry after either could
  * repeat them. Returns whether a retry was queued.
@@ -240,7 +253,14 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
     // the already-loaded list.
     const current = await tx.routine.findUnique({
       where: { id: routine.id },
-      select: { prompt: true, modelProvider: true, modelId: true, thinkingLevel: true },
+      select: {
+        prompt: true,
+        promptByOwner: true,
+        userId: true,
+        modelProvider: true,
+        modelId: true,
+        thinkingLevel: true,
+      },
     });
     if (!current) return null;
     const routinePrompt =
@@ -286,6 +306,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
         status: "queued",
         trigger: "routine",
         routineId: routine.id,
+        ownerRoutinePrompt: ownerRoutinePrompt(current, routine.userId, Boolean(watchTick?.run)),
         clientNonce: timerNonce,
         ...routineRunModelPin(current),
       },
@@ -483,6 +504,8 @@ export async function retryRoutineRun(deps: ExecutorDeps, runId: string) {
           trigger: "routine",
           routineId: failed.routineId,
           retryOfRunId: failed.id,
+          // The retry carries the failed run's prompt, so it keeps that run's standing.
+          ownerRoutinePrompt: failed.ownerRoutinePrompt,
           ...(failed.modelPinned
             ? {
                 modelProvider: failed.modelProvider,

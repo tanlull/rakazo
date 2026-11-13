@@ -1254,6 +1254,9 @@ model Run {
   routine              Routine?          @relation(fields: [routineId], references: [id], onDelete: SetNull)
   // The failed routine run this run retries. Unique, so a run is retried at most once.
   retryOfRunId         String?           @unique
+  /// A scheduled routine run whose prompt a person wrote, decided when the run was queued: it
+  /// may manage other bots until outside content enters it.
+  ownerRoutinePrompt   Boolean           @default(false)
   // Durable retry schedule; null means runnable immediately when queued.
   wakeAt               DateTime?
   // Server-side first visible output, preserved across attempts and resumes.
@@ -1517,6 +1520,8 @@ model Routine {
   nextRunAt      DateTime?
   /// Runs in a row the model provider refused for the account; each one spaces out the schedule.
   accountFailures Int      @default(0)
+  /// A person saved the current prompt here; a bot's edit clears it (see ownerRoutinePrompt).
+  promptByOwner  Boolean   @default(false)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   runs           Run[]

@@ -35,6 +35,7 @@ import {
   isRunTainted,
   neverAsks,
   OWN_INSTRUCTIONS_BASELINE_UNKNOWN_ERROR,
+  outsideContentEntered,
   refuseOwnerSettingsChange,
 } from "./run-context.js";
 import {
@@ -358,8 +359,14 @@ export async function prepareToolRequest(
     });
     if (!live?.fleetManagement)
       return refusal("tool_disabled", "This tool is disabled for this bot.");
-    if (!ctx.source.ownerStartedRun)
+    if (!ctx.source.ownerStartedRun && !ctx.source.ownerRoutineRun)
       return refusal("run_not_owner_started", "Bot management tools need a run you started.");
+    // Nobody watches a routine run, so once outside content enters it no mode lets it change bots.
+    if (fleetWrite && !ctx.source.ownerStartedRun && (await outsideContentEntered(ctx)))
+      return refusal(
+        "outside_content_blocks_bot_management",
+        "Changes to the bots you manage are blocked for the rest of this run because it read outside content.",
+      );
     if (fleetWrite && !(await neverAsks(ctx)) && (await ctx.trust.receivedOutsideMessage()))
       return refusal(
         "outside_message_blocks_bot_management",

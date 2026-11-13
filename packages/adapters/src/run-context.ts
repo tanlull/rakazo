@@ -188,6 +188,11 @@ export interface RunState {
    */
   tainted: boolean;
   /**
+   * Whether outside content has entered the run, whoever started it: set with `tainted` by
+   * tool results, outside messages and restored attempts, but not by the run's trigger alone.
+   */
+  outsideContent: boolean;
+  /**
    * The taint refusal for owner settings was returned in this attempt. A model that calls
    * again gets the turn ended instead of the same error a second time.
    */
@@ -233,6 +238,8 @@ export interface RunComputerContext {
 
 export interface RunSource {
   ownerStartedRun: boolean;
+  /** A routine run whose prompt its owner wrote (see ownerRoutinePrompt); it may manage bots. */
+  ownerRoutineRun?: boolean;
   messagingChannelRun: boolean;
   channelId: string | undefined;
   historySearchBeforeSeq: number;
@@ -385,14 +392,26 @@ export function refuseOwnerSettingsChange(
 }
 
 export async function isRunTainted(ctx: RunContext) {
+  if (ctx.state.tainted) return true;
+  if (await outsideContentEntered(ctx)) ctx.state.tainted = true;
+  return ctx.state.tainted;
+}
+
+/** Whether outside content entered this run, ignoring who started it (see RunState.tainted). */
+export async function outsideContentEntered(ctx: RunContext) {
   const { state } = ctx;
-  if (state.tainted) return true;
+  if (state.outsideContent) return true;
   state.earlierAttempt ??= ctx.deps.prisma.attempt
     .count({ where: { runId: ctx.runId } })
     .then((count) => count > 1);
   if ((await state.earlierAttempt) || (await ctx.trust.receivedOutsideMessage()))
-    state.tainted = true;
-  return state.tainted;
+    markOutsideContent(state);
+  return state.outsideContent;
+}
+
+export function markOutsideContent(state: Pick<RunState, "tainted" | "outsideContent">) {
+  state.tainted = true;
+  state.outsideContent = true;
 }
 
 /** A change landed after this attempt's snapshot; only a fresh run can apply the rewrite. */

@@ -120,6 +120,8 @@ export function selectBuiltinToolsForRun(options: {
   /** Built-in names this bot turned off. Unknown names are ignored. */
   disabledBuiltinTools?: readonly string[];
   fleetManagement?: boolean;
+  /** A routine run whose prompt its owner wrote; it is offered the bot management tools too. */
+  ownerRoutineRun?: boolean;
   /** A follow-up run whose source message the user wrote. */
   followUpFromUser?: boolean;
   /** The person who started this run has their desktop connected (see userComputerOwner). */
@@ -166,7 +168,8 @@ export function selectBuiltinToolsForRun(options: {
       (options.trigger !== BACKGROUND_HELPER_TRIGGER ||
         BACKGROUND_HELPER_TOOL_NAMES.has(tool.name)) &&
       (!FLEET_TOOL_NAMES_SET.has(tool.name) ||
-        (Boolean(options.fleetManagement) && ownerStartedRun)) &&
+        (Boolean(options.fleetManagement) &&
+          (ownerStartedRun || Boolean(options.ownerRoutineRun)))) &&
       (ownerStartedRun || (tool.name !== "update_preferences" && tool.name !== "feedback")) &&
       (options.paymentWalletEnabled || !PURCHASE_TOOL_NAMES.has(tool.name)) &&
       (options.mediaImagesEnabled || tool.name !== "generate_image") &&

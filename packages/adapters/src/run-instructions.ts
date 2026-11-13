@@ -257,7 +257,10 @@ function spawnBotClause(disabled?: ReadonlySet<string>): string | undefined {
 }
 
 /** The fleet rules, naming only the tools the run was offered; none without a write tool. */
-function fleetClause(offered: readonly string[] | undefined): string | undefined {
+function fleetClause(
+  offered: readonly string[] | undefined,
+  ownerRoutineRun: boolean,
+): string | undefined {
   const names = new Set(offered);
   if (!FLEET_WRITE_TOOL_NAMES.some((name) => names.has(name))) return undefined;
   const approval = FLEET_WRITE_TOOL_NAMES.filter(
@@ -269,6 +272,9 @@ function fleetClause(offered: readonly string[] | undefined): string | undefined
       ? `${listWords(approval)} ${approval.length > 1 ? "need" : "needs"} the owner's approval; the card shows what will run.`
       : undefined,
     "You can edit, re-model or schedule any bot in your current space.",
+    ownerRoutineRun
+      ? "This routine run can change bots only until it reads outside content (web pages, files, connector data or other bots' replies), so make bot changes first."
+      : undefined,
     names.has("set_child_instructions")
       ? "Instruction edits use set_child_instructions with expected_version from list_fleet; the owner sees the whole new text on the card, and you get one instruction edit per bot per run."
       : undefined,
@@ -346,6 +352,8 @@ export function userTurnInstructions(parts: {
   disabledBuiltinTools?: ReadonlySet<string>;
   /** The fleet tools the run was offered (see offeredFleetTools). */
   offeredFleetTools?: readonly string[];
+  /** A routine run whose prompt its owner wrote (see ownerRoutinePrompt). */
+  ownerRoutineRun?: boolean;
   /** The run can set its own follow-ups (see followUpsOffered). */
   followUpsOffered?: boolean;
   /** Whether this turn may start a background helper (only in the bot's own app chat). */
@@ -388,7 +396,7 @@ export function userTurnInstructions(parts: {
       "archive_bot",
       "archive_bot safely archives another bot in this space. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.",
     ),
-    fleetClause(parts.offeredFleetTools),
+    fleetClause(parts.offeredFleetTools, Boolean(parts.ownerRoutineRun)),
     parts.pluginLine,
     parts.agentSkillsLine,
     parts.agentSkillsLine &&
