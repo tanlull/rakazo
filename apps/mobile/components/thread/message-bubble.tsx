@@ -244,7 +244,7 @@ const MessageBubbleContent = memo(function MessageBubbleContent({
     remember?: false,
   ) => Promise<void>;
   onOpenBot: (botId: string, name: string) => void;
-  onOpenComputer: (botId: string, name: string) => void;
+  onOpenComputer: (botId: string, name: string, takeControl?: boolean) => void;
   onChoiceDismissed?: (question: string) => void;
   /** Opens a file the app can show; other types go to the share sheet. */
   onPreviewFile: (artifactId: string) => void;
@@ -735,7 +735,10 @@ const MessageBubbleContent = memo(function MessageBubbleContent({
           key={`computer-${index}`}
           block={block}
           onOpen={
-            computerBotId ? () => onOpenComputer(computerBotId, speaker ?? t`Bot`) : undefined
+            computerBotId
+              ? // A bot waiting on the user opens straight into control.
+                () => onOpenComputer(computerBotId, speaker ?? t`Bot`, block.state === "Needs you")
+              : undefined
           }
           accessibilityActions={actionProps.accessibilityActions}
           onAccessibilityAction={actionProps.onAccessibilityAction}

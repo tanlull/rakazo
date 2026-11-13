@@ -58,7 +58,7 @@ export type MessageRowActions = {
     remember?: false,
   ) => Promise<void>;
   openBot: (id: string, name: string) => void;
-  openComputer: (id: string, name: string) => void;
+  openComputer: (id: string, name: string, takeControl?: boolean) => void;
   previewFile: (artifactId: string) => void;
   previewImage: (target: ImageArtifactPreviewTarget) => void;
   jump: (messageId: string) => void;

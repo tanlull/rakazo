@@ -123,7 +123,7 @@ export const MessageView = memo(function MessageView({
   /** An active call owns the speaker, so new reads wait until it ends. */
   callHoldsSpeaker: boolean;
   onSpeak: (message: ThreadMessage) => void;
-  onOpenComputer: (botId?: string) => void;
+  onOpenComputer: (botId?: string, takeControl?: boolean) => void;
   /** Opens where an imported item's setup is finished. */
   onOpenImportSetup?: (target: ImportSetupTarget) => void;
   rpc: ReturnType<typeof createSpaceRpc>;
@@ -692,7 +692,8 @@ export const MessageView = memo(function MessageView({
                   type="button"
                   size="sm"
                   data-testid="computer-card-open"
-                  onClick={() => onOpenComputer(message.botId)}
+                  // A bot waiting on the user opens straight into control.
+                  onClick={() => onOpenComputer(message.botId, block.state === "Needs you")}
                 >
                   <Trans>Open</Trans>
                 </Button>

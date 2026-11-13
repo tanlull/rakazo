@@ -150,7 +150,7 @@ export const Transcript = memo(function Transcript({
   speakingMessageId: string | null;
   callHoldsSpeaker: boolean;
   onSpeak: (message: ThreadMessage) => void;
-  onOpenComputer: (botId?: string) => void;
+  onOpenComputer: (botId?: string, takeControl?: boolean) => void;
   onOpenImportSetup?: (target: ImportSetupTarget) => void;
   rpc: ReturnType<typeof createSpaceRpc>;
 }) {
