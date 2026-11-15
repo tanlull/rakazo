@@ -12,11 +12,34 @@ import {
   modelStreamIdleTimeoutMs,
   modelStreamMaxRetries,
   modelStreamTimeoutMs,
+  modelTransientRetries,
   operatorMaxTokens,
   REASONING_MODEL_MAX_TOKENS,
   resolveCompletionMaxTokens,
   TOOL_RESULT_TEXT_LIMIT,
 } from "./pi-runtime-limits.js";
+
+describe("modelTransientRetries", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("defaults to three retries when unset", () => {
+    vi.stubEnv("RAKAZO_MODEL_TRANSIENT_RETRIES", undefined);
+    expect(modelTransientRetries()).toBe(3);
+  });
+
+  it.each(["0", "1", "3", "5", " 3 "])("accepts %j", (value) => {
+    vi.stubEnv("RAKAZO_MODEL_TRANSIENT_RETRIES", value);
+    expect(modelTransientRetries()).toBe(Number(value));
+  });
+
+  it.each(["", " ", "-1", "6", "1.5", "NaN", "three"])(
+    "falls back to three retries for %j",
+    (value) => {
+      vi.stubEnv("RAKAZO_MODEL_TRANSIENT_RETRIES", value);
+      expect(modelTransientRetries()).toBe(3);
+    },
+  );
+});
 
 describe("modelStreamMaxRetries", () => {
   afterEach(() => vi.unstubAllEnvs());

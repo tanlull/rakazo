@@ -34,6 +34,7 @@ async function runTurn(
   vi.stubEnv("RAKAZO_LOCAL_MODELS", "example-model");
   // One attempt: a retry would only repeat the same scripted response.
   vi.stubEnv("MODEL_STREAM_MAX_RETRIES", "0");
+  vi.stubEnv("RAKAZO_MODEL_TRANSIENT_RETRIES", "0");
   vi.stubEnv("MODEL_STREAM_TIMEOUT_MS", "1000");
   const server = createServer((request, response) => {
     request.resume();

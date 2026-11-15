@@ -13,6 +13,8 @@ export const MODEL_CONNECT_TIMEOUT_MS = 30_000;
  */
 export const MODEL_STREAM_IDLE_TIMEOUT_MS = 180_000;
 export const DEFAULT_MODEL_STREAM_MAX_RETRIES = 1;
+/** Same-model repeats after a transient provider failure, not counting the first attempt. */
+export const DEFAULT_MODEL_TRANSIENT_RETRIES = 3;
 
 /**
  * Options for an undici `Agent` that carries model streams. undici otherwise drops a
@@ -27,6 +29,17 @@ export function modelStreamMaxRetries(): number {
   const value = process.env.MODEL_STREAM_MAX_RETRIES?.trim();
   const raw = Number(value || DEFAULT_MODEL_STREAM_MAX_RETRIES);
   return Number.isInteger(raw) && raw >= 0 && raw <= 5 ? raw : DEFAULT_MODEL_STREAM_MAX_RETRIES;
+}
+
+/**
+ * How many times to repeat one model call after a transient failure (dropped stream,
+ * connection reset, 429, 5xx). The first attempt is not included. Auth, invalid requests
+ * and exhausted quota are not retried. Invalid or blank values use the default.
+ */
+export function modelTransientRetries(): number {
+  const value = process.env.RAKAZO_MODEL_TRANSIENT_RETRIES?.trim();
+  const raw = Number(value || DEFAULT_MODEL_TRANSIENT_RETRIES);
+  return Number.isInteger(raw) && raw >= 0 && raw <= 5 ? raw : DEFAULT_MODEL_TRANSIENT_RETRIES;
 }
 
 /**

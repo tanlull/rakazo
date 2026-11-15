@@ -243,16 +243,16 @@ describe("Pi runtime transient model retries", () => {
     expect(await run(request())).toContainEqual({ type: "text", text: "Recovered." });
     expect(providerState.stream).toHaveBeenCalledTimes(2);
     expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
-    expect(providerState.stream.mock.calls[1]?.[2].timeoutMs).toBe(MODEL_STREAM_TIMEOUT_MS - 2_000);
+    expect(providerState.stream.mock.calls[1]?.[2].timeoutMs).toBe(MODEL_STREAM_TIMEOUT_MS);
   });
 
-  it("caps idle recovery at one retry even when failures arrive before the idle bound", async () => {
+  it("retries an idle timeout up to the transient budget, then keeps that error", async () => {
     providerState.stream.mockImplementation(() =>
       stream(primary, message(primary, [], "error", MODEL_STREAM_IDLE_TIMEOUT_MESSAGE)),
     );
     await expect(run(request())).rejects.toThrow(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
-    expect(providerState.stream).toHaveBeenCalledTimes(2);
-    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
   });
 
   it("recovers idle after a completed tool without replaying the effect", async () => {
@@ -291,7 +291,7 @@ describe("Pi runtime transient model retries", () => {
     );
   });
 
-  it("does not renew the idle recovery budget again for an ordinary timeout", async () => {
+  it("keeps the first transient error when later attempts time out", async () => {
     vi.useFakeTimers();
     providerState.stream.mockImplementation((_target, _context, options) => {
       vi.setSystemTime(
@@ -307,8 +307,8 @@ describe("Pi runtime transient model retries", () => {
       return stream(primary, message(primary, [], "error", error));
     });
     await expect(run(request())).rejects.toThrow(MODEL_STREAM_IDLE_TIMEOUT_MESSAGE);
-    expect(providerState.stream).toHaveBeenCalledTimes(2);
-    expect(providerState.delay).toHaveBeenCalledOnce();
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay).toHaveBeenCalledTimes(3);
   });
 
   it("does not recover idle after partial text", async () => {
@@ -327,6 +327,8 @@ describe("Pi runtime transient model retries", () => {
     "Codex error: Our servers are currently overloaded. Please try again later.",
     "Connection error.",
     "Request timed out.",
+    "socket hang up",
+    "read ECONNRESET",
   ])(
     "recovers from two pre-output failures with %s and commits one assistant message",
     async (error) => {
@@ -392,20 +394,27 @@ describe("Pi runtime transient model retries", () => {
     expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
   });
 
-  it.each(["Request timed out.", "Connection error.", "HTTP 503 unavailable"])(
-    "does not retry %s after the request budget is spent",
+  it.each(["Request timed out.", "Connection error.", "HTTP 503 unavailable", "terminated"])(
+    "retries %s after the header budget has already elapsed",
     async (error) => {
       vi.useFakeTimers();
+      providerState.delay.mockImplementation(async (delay) => {
+        vi.setSystemTime(Date.now() + delay);
+      });
       const pending = new AssistantMessageEventStream();
-      providerState.stream.mockReturnValue(pending);
-      const outcome = run(request()).catch((error: unknown) => error);
+      providerState.stream
+        .mockReturnValueOnce(pending)
+        .mockImplementation(() =>
+          stream(primary, message(primary, [{ type: "text", text: "Recovered." }], "stop")),
+        );
+      const outcome = run(request());
       await vi.advanceTimersByTimeAsync(MODEL_STREAM_TIMEOUT_MS);
       const failure = message(primary, [], "error", error);
       pending.push({ type: "error", reason: "error", error: failure });
       pending.end(failure);
-      expect(await outcome).toEqual(expect.objectContaining({ message: error }));
-      expect(providerState.stream).toHaveBeenCalledTimes(1);
-      expect(providerState.delay).not.toHaveBeenCalled();
+      expect(await outcome).toContainEqual({ type: "text", text: "Recovered." });
+      expect(providerState.stream).toHaveBeenCalledTimes(2);
+      expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
     },
   );
 
@@ -424,40 +433,37 @@ describe("Pi runtime transient model retries", () => {
     pending.push({ type: "error", reason: "error", error: failure });
     pending.end(failure);
     expect(await outcome).toContainEqual({ type: "text", text: "Recovered." });
-    expect(providerState.stream.mock.calls[1]?.[2].timeoutMs).toBe(
-      240_000 - MODEL_STREAM_TIMEOUT_MS,
-    );
+    expect(providerState.stream.mock.calls[1]?.[2].timeoutMs).toBe(240_000);
   });
 
-  it("bounds repeated early timeouts by elapsed request budget", async () => {
+  it("retries early timeouts up to the transient budget, each with a full header timeout", async () => {
     vi.useFakeTimers();
     const { abortableDelay } = await vi.importActual<typeof Core>("@rakazo/core");
     providerState.delay.mockImplementation(abortableDelay);
-    providerState.stream.mockImplementation((_target, _context, options) => {
+    providerState.stream.mockImplementation(() => {
       const pending = new AssistantMessageEventStream();
-      setTimeout(
-        () => {
-          const failure = message(primary, [], "error", "Request timed out.");
-          pending.push({ type: "error", reason: "error", error: failure });
-          pending.end(failure);
-        },
-        Math.min(MODEL_STREAM_TIMEOUT_MS / 2, options.timeoutMs),
-      );
+      setTimeout(() => {
+        const failure = message(primary, [], "error", "Request timed out.");
+        pending.push({ type: "error", reason: "error", error: failure });
+        pending.end(failure);
+      }, MODEL_STREAM_TIMEOUT_MS / 2);
       return pending;
     });
     const outcome = run(request()).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(MODEL_STREAM_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(MODEL_STREAM_TIMEOUT_MS * 2 + 30_000);
     expect(providerState.stream.mock.calls.map(([, , options]) => options.timeoutMs)).toEqual([
       MODEL_STREAM_TIMEOUT_MS,
-      MODEL_STREAM_TIMEOUT_MS / 2 - 2_000,
+      MODEL_STREAM_TIMEOUT_MS,
+      MODEL_STREAM_TIMEOUT_MS,
+      MODEL_STREAM_TIMEOUT_MS,
     ]);
     expect(await outcome).toEqual(expect.objectContaining({ message: "Request timed out." }));
-    expect(providerState.stream).toHaveBeenCalledTimes(2);
-    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("does not back off when the delay would consume the remaining budget", async () => {
+  it("backs off between each transient retry after the header budget is already spent", async () => {
     vi.useFakeTimers();
     const { abortableDelay } = await vi.importActual<typeof Core>("@rakazo/core");
     providerState.delay.mockImplementation(abortableDelay);
@@ -471,24 +477,24 @@ describe("Pi runtime transient model retries", () => {
       return pending;
     });
     const outcome = run(request()).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(100_000);
-    expect(providerState.stream).toHaveBeenCalledTimes(3);
-    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000]);
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
     expect(await outcome).toEqual(expect.objectContaining({ message: "Request timed out." }));
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("rechecks the budget when backoff wakes after the deadline", async () => {
+  it("still retries when backoff itself outlasts the header timeout", async () => {
     vi.useFakeTimers();
-    providerState.delay.mockImplementation(async () => {
-      vi.setSystemTime(Date.now() + MODEL_STREAM_TIMEOUT_MS);
+    providerState.delay.mockImplementation(async (delay) => {
+      vi.setSystemTime(Date.now() + delay);
     });
     providerState.stream.mockImplementation(() =>
       stream(primary, message(primary, [], "error", "Connection error.")),
     );
     await expect(run(request())).rejects.toThrow("Connection error.");
-    expect(providerState.stream).toHaveBeenCalledOnce();
-    expect(providerState.delay).toHaveBeenCalledOnce();
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
   });
 
   it("surfaces a non-retryable error encountered after a transient failure", async () => {
@@ -500,27 +506,131 @@ describe("Pi runtime transient model retries", () => {
     expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
   });
 
-  it.each([
-    "terminated",
-    "Stream ended without finish_reason",
-    "Request timed out.",
-    "Connection error.",
-    MODEL_STREAM_IDLE_TIMEOUT_MESSAGE,
-  ])("does not retry after a tool call starts even if %s omits it", async (error) => {
+  function toolCallThenTerminated(error = "terminated") {
     const failure = message(primary, [], "error", error);
-    providerState.stream.mockImplementation(() => {
-      const result = new AssistantMessageEventStream();
-      result.push({ type: "start", partial: failure });
-      result.push({ type: "toolcall_start", contentIndex: 0, partial: failure });
-      result.push({ type: "error", reason: "error", error: failure });
-      result.end(failure);
-      return result;
+    const result = new AssistantMessageEventStream();
+    result.push({ type: "start", partial: failure });
+    result.push({ type: "toolcall_start", contentIndex: 0, partial: failure });
+    result.push({
+      type: "toolcall_delta",
+      contentIndex: 0,
+      delta: '{"command":"',
+      partial: failure,
     });
-    const input = request([{ provider: backupA.provider, id: backupA.id, apiKey: "backup-key" }]);
-    await expect(run(input)).rejects.toThrow(error);
+    result.push({ type: "error", reason: "error", error: failure });
+    result.end(failure);
+    return result;
+  }
+
+  it("retries when a terminated response already holds an unfinished tool call", async () => {
+    const input = request();
+    const failure = message(
+      primary,
+      [
+        {
+          type: "toolCall",
+          id: "half",
+          name: "write_effect",
+          arguments: { value: "par" },
+        },
+      ],
+      "error",
+      "terminated",
+    );
+    providerState.stream
+      .mockImplementationOnce(() => stream(primary, failure))
+      .mockImplementation(() =>
+        stream(primary, message(primary, [{ type: "text", text: "Recovered." }], "stop")),
+      );
+    const events = await run(input);
+    expect(providerState.stream).toHaveBeenCalledTimes(2);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
+    expect(input.executeTool).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "Recovered." },
+    ]);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Recovered." });
+  });
+
+  it("retries a stream terminated while a tool call is still being written", async () => {
+    const input = request();
+    providerState.stream
+      .mockImplementationOnce(() => toolCallThenTerminated())
+      .mockImplementation(() =>
+        stream(primary, message(primary, [{ type: "text", text: "Recovered." }], "stop")),
+      );
+    const events = await run(input);
+    expect(providerState.stream).toHaveBeenCalledTimes(2);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000]);
+    expect(input.executeTool).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "Recovered." },
+    ]);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Recovered." });
+    const [first, second] = providerState.stream.mock.calls.map(([, context]) =>
+      JSON.stringify(context),
+    );
+    expect(second).toBe(first);
+  });
+
+  it("does not repeat a finished tool when the next call is terminated mid-response", async () => {
+    const input = request();
+    providerState.stream
+      .mockImplementationOnce(() =>
+        stream(
+          primary,
+          message(
+            primary,
+            [
+              {
+                type: "toolCall",
+                id: "effect-once",
+                name: "write_effect",
+                arguments: { value: "once" },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      )
+      .mockImplementationOnce(() => toolCallThenTerminated("socket hang up"))
+      .mockImplementation(() =>
+        stream(primary, message(primary, [{ type: "text", text: "Done." }], "stop")),
+      );
+    const events = await run(input);
+    expect(input.executeTool).toHaveBeenCalledOnce();
+    expect(events.at(-1)).toEqual({ type: "done", text: "Done." });
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "Done." },
+    ]);
+  });
+
+  it("fails with the original error once a mid-response terminate exhausts its retries", async () => {
+    const input = request();
+    providerState.stream.mockImplementation(() => toolCallThenTerminated());
+    await expect(run(input)).rejects.toThrow("terminated");
+    expect(providerState.stream).toHaveBeenCalledTimes(4);
+    expect(providerState.delay.mock.calls.map(([delay]) => delay)).toEqual([2_000, 8_000, 20_000]);
+    expect(input.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a non-transient error that arrives while a tool call is being written", async () => {
+    const input = request();
+    providerState.stream.mockImplementation(() => toolCallThenTerminated("invalid api key"));
+    await expect(run(input)).rejects.toThrow("invalid api key");
     expect(providerState.stream).toHaveBeenCalledOnce();
     expect(providerState.delay).not.toHaveBeenCalled();
     expect(input.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("stops when RAKAZO_MODEL_TRANSIENT_RETRIES is zero", async () => {
+    vi.stubEnv("RAKAZO_MODEL_TRANSIENT_RETRIES", "0");
+    providerState.stream.mockImplementation(() =>
+      stream(primary, message(primary, [], "error", "terminated")),
+    );
+    await expect(run(request())).rejects.toThrow("terminated");
+    expect(providerState.stream).toHaveBeenCalledOnce();
+    expect(providerState.delay).not.toHaveBeenCalled();
   });
 
   it("retries the same model for a helper agent without configured backups", async () => {
