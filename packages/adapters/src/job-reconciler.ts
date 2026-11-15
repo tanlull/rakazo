@@ -11,6 +11,7 @@ import { returnHelperOutcome } from "./background-helpers.js";
 import { returnBotMessageOutcome } from "./bot-messages.js";
 import { reconcileCallRequests } from "./call-request.js";
 import { scheduleComputerControlExpiry } from "./computer-control.js";
+import { reconcileDelegationStalls } from "./delegation-stall.js";
 import { findRunRecoveryBlockers } from "./run-recovery.js";
 import { messageBlocksText } from "./run-replies.js";
 import { reconcileStuckWork } from "./stuck-work.js";
@@ -202,6 +203,11 @@ export function createJobReconciler(
         });
       } catch (error) {
         getLogger().error("stuck work reconciliation", error);
+      }
+      try {
+        await reconcileDelegationStalls({ prisma: deps.prisma, jobs: deps.jobs, now, batchSize });
+      } catch (error) {
+        getLogger().error("delegation stall reconciliation", error);
       }
       const runCursorFilter = runCursor
         ? {

@@ -8,6 +8,7 @@ import {
   APPROVED_ACTION_NOT_RUN_ERROR,
   abortableDelay,
   BOT_MESSAGE_WAKE_CUE,
+  DELEGATION_STALL_WAKE_LEAD,
   inferHandoffTargetName,
   MODEL_CONTEXT_TOO_SMALL_ERROR,
   MODEL_OUTPUT_CUT_ERROR,
@@ -275,9 +276,34 @@ export function inferScript(
       },
     ];
   }
-  // A delegated result wakes the bot to relay it to the user. Before every content-based intent
-  // so the peer's text cannot steal the branch.
+  // A stall re-wake is a generated prompt. Handle it before any phrase inside the quoted
+  // result can pick another action.
+  if (prompt.replace(REPLY_CONTEXT, "").startsWith(DELEGATION_STALL_WAKE_LEAD)) {
+    return [
+      {
+        assistant: "sending the next step.",
+        toolCalls: [{ name: "message_bot", args: { message: "next step", intent: "request" } }],
+        complete: true,
+      },
+    ];
+  }
+  // A delegated result wakes the bot. An open plan sends the next step; otherwise the
+  // result is relayed. Before every content-based intent so the peer's text cannot steal the branch.
   const report = delegatedReport(prompt);
+  if (report?.continuePlan) {
+    return [
+      {
+        assistant: `continuing after ${report.from}.`,
+        toolCalls: [
+          {
+            name: "message_bot",
+            args: { confirm_name: report.from, message: "next step", intent: "request" },
+          },
+        ],
+        complete: true,
+      },
+    ];
+  }
   if (report) {
     return [{ assistant: `Here's what ${report.from} found: ${report.gist}`, complete: true }];
   }
@@ -1069,8 +1095,10 @@ function peerMessage(prompt: string): { from: string; text: string } | undefined
   return { from: match[1] || "Peer", text };
 }
 
-/** A delegated result or status to relay: who sent it and its last paragraph. */
-function delegatedReport(prompt: string): { from: string; gist: string } | undefined {
+/** A delegated result or status: who sent it, its gist, and whether an open plan remains. */
+function delegatedReport(
+  prompt: string,
+): { from: string; gist: string; continuePlan: boolean } | undefined {
   if (!/^This is a (?:result|status) for work you delegated\./m.test(prompt)) return undefined;
   const message = peerMessage(prompt);
   if (!message?.text) return undefined;
@@ -1079,7 +1107,8 @@ function delegatedReport(prompt: string): { from: string; gist: string } | undef
       .split(/\n\s*\n/)
       .at(-1)
       ?.trim() || message.text;
-  return { from: message.from, gist };
+  // The plan tag is written by the platform. Peer text is escaped, so it cannot open one.
+  return { from: message.from, gist, continuePlan: prompt.includes("<active_plan>") };
 }
 
 function summarize(prompt: string): string {

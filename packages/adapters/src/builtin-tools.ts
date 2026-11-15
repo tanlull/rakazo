@@ -24,6 +24,7 @@ import {
   TICKET_STATUSES,
   TICKET_TITLE_MAX_LENGTH,
 } from "@rakazo/contracts";
+import { BOT_PIPELINE_GUIDANCE } from "@rakazo/core";
 import { z } from "zod";
 import { allowPrivateHttpSecretOrigins } from "./bot-secrets.js";
 import { BROWSER_ACT_KINDS } from "./browser-tools.js";
@@ -1812,8 +1813,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   },
   {
     name: "message_bot",
-    description:
-      'Send a useful update, question, or result to another of the user\'s bots. You must call this tool to actually deliver it — writing the message in your own reply text (e.g. "[to Comms] ...") does not send anything and the recipient never sees it. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new.',
+    description: `Send a useful update, question, or result to another of the user's bots. You must call this tool to actually deliver it — writing the message in your own reply text (e.g. "[to Comms] ...") does not send anything and the recipient never sees it. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new. ${BOT_PIPELINE_GUIDANCE}`,
     inputSchema: {
       type: "object",
       properties: {

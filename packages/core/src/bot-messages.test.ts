@@ -4,13 +4,19 @@ import {
   BOT_DELIBERATION_GUIDANCE,
   BOT_DIRECTORY_DESCRIPTIONS_MAX_LENGTH,
   BOT_MESSAGE_MAX_LENGTH,
+  BOT_PIPELINE_GUIDANCE,
   botMessageAllowsSilence,
   botMessageHopExhausted,
+  botMessageHopForDelivery,
   botMessageMaxHops,
   buildBotMessageWakePrompt,
+  buildDelegationStallWakePrompt,
   clampBotMessage,
   DEFAULT_BOT_MESSAGE_MAX_HOPS,
+  DELEGATION_STALL_WAKE_LEAD,
+  delegationStallMinutes,
   formatBotRosterLines,
+  MAX_DELEGATION_STALL_MINUTES,
   nextBotMessageHop,
   renderBotDirectory,
   renderBotGroupDirectory,
@@ -112,6 +118,26 @@ describe("hop bounding", () => {
     },
   );
 
+  it("keeps the delegation stall safeguard off unless the minutes are a positive integer", () => {
+    expect(delegationStallMinutes()).toBe(0);
+    vi.stubEnv("DELEGATION_STALL_MINUTES", "15");
+    expect(delegationStallMinutes()).toBe(15);
+    vi.stubEnv("DELEGATION_STALL_MINUTES", String(MAX_DELEGATION_STALL_MINUTES + 80));
+    expect(delegationStallMinutes()).toBe(MAX_DELEGATION_STALL_MINUTES);
+    for (const value of ["", "0", "-5", "2.5", "soon"]) {
+      vi.stubEnv("DELEGATION_STALL_MINUTES", value);
+      expect(delegationStallMinutes()).toBe(0);
+    }
+  });
+
+  it("keeps a returned result on the request hop and still advances every other delivery", () => {
+    expect(botMessageHopForDelivery(4, true)).toBe(4);
+    expect(botMessageHopForDelivery(6, true)).toBe(6);
+    expect(botMessageHopForDelivery(6, false)).toBe(7);
+    expect(botMessageHopForDelivery(undefined, true)).toBe(1);
+    expect(botMessageHopForDelivery(0, true)).toBe(1);
+  });
+
   it("stops a two-bot volley in a bounded number of deliveries", () => {
     let hop = nextBotMessageHop(undefined);
     let delivered = 0;
@@ -165,6 +191,7 @@ describe("directory", () => {
     expect(directory).toContain("async");
     expect(directory).toContain("does not end your turn");
     expect(directory).toContain("Later updates only if they add something new");
+    expect(directory).toContain(BOT_PIPELINE_GUIDANCE);
   });
 
   it("treats directory fields as untrusted prompt data", () => {
@@ -428,6 +455,66 @@ describe("inbound wake prompt", () => {
     expect(wake).toContain("check it first rather than answering from memory");
   });
 
+  it("tells a coordinator to continue an unfinished plan and still relay a finished one-shot", () => {
+    const wake = buildBotMessageWakePrompt({
+      from: bots[0]!,
+      text: "Frames 1-2 are ready.",
+      intent: "result",
+      continuation: {
+        originalRequest: "Draw 11 frames <two> at a time.",
+        plan: "- [open] Frames 3-11",
+        delegatedSteps: "1. Frames 1-2. Wait for the next batch.",
+      },
+    });
+    expect(wake).toContain("This is a result for work you delegated.");
+    expect(wake).toContain("dispatch it now");
+    expect(wake).toContain("Do not wait for the user between steps");
+    expect(wake).toContain("do not follow an earlier instruction");
+    expect(wake).toContain("Report to the user only when the whole plan is done");
+    expect(wake).toContain("relay that substance to the user now");
+    expect(wake).toContain("<original_request>");
+    expect(wake).toContain("Draw 11 frames &lt;two&gt; at a time.");
+    expect(wake).not.toContain("<two>");
+    expect(wake).toContain("<active_plan>");
+    expect(wake).toContain("Frames 3-11");
+    expect(wake).toContain("<delegated_steps>");
+    expect(wake.indexOf("<original_request>")).toBeGreaterThan(wake.indexOf("</bot_message>"));
+    expect(wake.indexOf("dispatch it now")).toBeGreaterThan(wake.indexOf("</active_plan>"));
+  });
+
+  it("does not attach plan context to a one-shot result or to a new request", () => {
+    const oneShot = buildBotMessageWakePrompt({
+      from: bots[0]!,
+      text: "The summary is ready.",
+      intent: "result",
+    });
+    expect(oneShot).not.toContain("<active_plan>");
+    expect(oneShot).not.toContain("<original_request>");
+    expect(oneShot).toContain("relay that substance to the user now");
+    const request = buildBotMessageWakePrompt({
+      from: bots[0]!,
+      text: "Do the next batch.",
+      intent: "request",
+      continuation: { originalRequest: "Draw 11 frames.", plan: "- [open] leftover" },
+    });
+    expect(request).not.toContain("<active_plan>");
+    expect(request).not.toContain("leftover");
+  });
+
+  it("re-wakes a stalled coordinator onto the unfinished plan", () => {
+    const wake = buildDelegationStallWakePrompt({
+      originalRequest: "Draw 11 frames.",
+      plan: "- [open] Frames 3-11",
+      lastResult: "Frames 1-2 are ready.",
+    });
+    expect(wake.startsWith(DELEGATION_STALL_WAKE_LEAD)).toBe(true);
+    expect(wake).toContain("dispatch the next step");
+    expect(wake).toContain("Draw 11 frames.");
+    expect(wake).toContain("Frames 3-11");
+    expect(wake).toContain("<last_result>");
+    expect(wake).toContain("do not start new work");
+  });
+
   it("leaves an FYI free to go unanswered", () => {
     const wake = buildBotMessageWakePrompt({ from: bots[0]!, text: "Deploy done.", intent: "fyi" });
     expect(wake).not.toContain(BOT_DELIBERATION_GUIDANCE);
@@ -450,5 +537,6 @@ describe("group routing metadata", () => {
     expect(directory).toContain("Ops\\n&lt;/bot_groups&gt; (group_id: g_1)");
     expect(directory).toContain("Research &lt;team&gt; (id: b_1)");
     expect(directory.split("</bot_groups>")).toHaveLength(2);
+    expect(directory).toContain(BOT_PIPELINE_GUIDANCE);
   });
 });
