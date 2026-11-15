@@ -104,9 +104,11 @@ export function resolveSpaceComputerLimit(
  * runaway page must not starve the host or sibling bots. Set any of these to
  * "0", "none" or "unlimited" to opt out.
  */
-const DEFAULT_COMPUTER_MEMORY = "2g";
+const DEFAULT_COMPUTER_MEMORY = "4g";
 const DEFAULT_COMPUTER_CPUS = "2";
 const DEFAULT_COMPUTER_PIDS_LIMIT = "2048";
+/** /dev/shm for Chromium. Docker's own default is 64 MiB, too small for several browsers. */
+const DEFAULT_COMPUTER_SHM_SIZE = "1g";
 /** The daemon refuses HostConfig.Memory below this at container creation. */
 const MIN_DOCKER_MEMORY_BYTES = 6 * 1024 ** 2;
 
@@ -190,6 +192,12 @@ export function computerResourceLimits() {
     MemorySwap: memoryBytes,
     NanoCpus: nanoCpus,
     PidsLimit: pidsLimit,
+    // Same parser as memory, so 0 / none / unlimited yield 0. Docker reads ShmSize 0 as its
+    // 64 MiB default rather than an uncapped mount; there is no unlimited /dev/shm.
+    ShmSize: parseMemoryBytes(
+      "RAKAZO_COMPUTER_SHM_SIZE",
+      envOrDefault("RAKAZO_COMPUTER_SHM_SIZE", DEFAULT_COMPUTER_SHM_SIZE),
+    ),
   };
 }
 
@@ -647,7 +655,6 @@ export function containerCreateOptions(input: ComputerCreateInput) {
             Mounts: extraMounts.length ? extraMounts : undefined,
           }),
       PortBindings: ports.PortBindings,
-      ShmSize: 256 * 1024 * 1024,
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges:true"],
       ...computerResourceLimits(),
