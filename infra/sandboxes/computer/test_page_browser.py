@@ -79,6 +79,8 @@ class FakeAgentBrowser:
         self.checks = []
         self.disabled = set()
         self.aria_disabled = {}
+        # Each control's type attribute, such as a file input's.
+        self.types = {"e2": "file"}
         # Each control's box, relative to the top of the visible part of the page.
         self.boxes = {}
         # A JavaScript dialog the next click opens, then the one open on the page.
@@ -144,6 +146,8 @@ class FakeAgentBrowser:
             return {"enabled": command[2].lstrip("@") not in self.disabled}
         if name == "get" and command[1] == "box":
             return self.boxes.get(command[2].lstrip("@"), {})
+        if name == "get" and command[1] == "attr" and command[3] == "type":
+            return {"value": self.types.get(command[2].lstrip("@"))}
         if name == "get" and command[1] == "attr" and command[3] == "aria-disabled":
             return {"value": self.aria_disabled.get(command[2].lstrip("@"))}
         if name == "get" and command[1] == "attr":
@@ -1043,6 +1047,29 @@ class ActTest(unittest.TestCase):
                 self.assertTrue(result["ok"])
                 with self.assertRaisesRegex(RuntimeError, "inside"):
                     self.act([{"kind": "upload", "ref": "e2", "paths": ["/etc/passwd"]}])
+
+    def test_uploads_through_the_file_chooser_a_button_opens(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "ref.png").write_text("fake")
+            ref = os.path.realpath(Path(home, "ref.png"))
+            with patch.dict(os.environ, {"HOME": home}), \
+                    patch.object(secrets, "choose_files", side_effect=lambda port, target, click, files: click()) \
+                    as choose:
+                result, browser = self.act([{"kind": "upload", "ref": "e8", "paths": ["ref.png"]}])
+            self.assertTrue(result["ok"])
+            self.assertEqual(choose.call_args.args[:2], (9222, "tab-1"))
+            self.assertEqual(choose.call_args.args[3], [ref])
+            # The button is clicked while the chooser is intercepted, never uploaded to.
+            self.assertEqual(browser.actions(), [["click", "@e8"]])
+
+    def test_an_upload_whose_click_opens_no_chooser_reports_the_page(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "ref.png").write_text("fake")
+            with patch.dict(os.environ, {"HOME": home}), \
+                    patch.object(secrets, "choose_files", side_effect=secrets.NoFileChooser("no chooser")):
+                result, _ = self.act([{"kind": "upload", "ref": "e8", "paths": ["ref.png"]}])
+        self.assertFalse(result["ok"])
+        self.assertIn("no chooser", result["error"])
 
     def test_uploads_to_a_hidden_file_input_by_its_mark(self):
         with tempfile.TemporaryDirectory() as home:
@@ -2004,6 +2031,59 @@ def ws_frame(payload, mask=None):
     if mask:
         return bytes(header) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
     return bytes(header) + payload
+
+
+class ChooseFilesTest(unittest.TestCase):
+    class Client:
+        def __init__(self, chooser):
+            self.chooser, self.calls, self.clicked = chooser, [], False
+
+        def call(self, method, params=None, *, session_id=None, timeout_s=10.0):
+            self.calls.append((method, params))
+            return {"sessionId": "s1"} if method == "Target.attachToTarget" else {}
+
+        def watch(self, method):
+            self.watched = method
+
+        def wait_event(self, method, session_id, timeout_s):
+            return self.chooser if self.clicked and session_id == "s1" else None
+
+        def close(self):
+            pass
+
+    def choose(self, chooser, files=("/home/u/a.png",)):
+        client = self.Client(chooser)
+        with patch.object(secrets, "connect", return_value=client):
+            try:
+                secrets.choose_files(9222, "tab-1", lambda: setattr(client, "clicked", True), list(files))
+            finally:
+                calls = client.calls
+        return calls
+
+    def test_the_files_go_into_the_input_whose_chooser_the_click_opened(self):
+        calls = self.choose({"backendNodeId": 42, "mode": "selectMultiple"}, ("/home/u/a.png", "/home/u/b.png"))
+        self.assertIn(("Page.setInterceptFileChooserDialog", {"enabled": True}), calls)
+        self.assertIn(("DOM.setFileInputFiles", {"files": ["/home/u/a.png", "/home/u/b.png"], "backendNodeId": 42}),
+                      calls)
+        self.assertEqual(calls[-1], ("Page.setInterceptFileChooserDialog", {"enabled": False}))
+
+    def test_no_chooser_or_too_many_files_attaches_nothing_and_stops_intercepting(self):
+        for chooser, files, error in ((None, ("/a",), secrets.NoFileChooser),
+                                      ({"backendNodeId": 42, "mode": "selectSingle"}, ("/a", "/b"), RuntimeError)):
+            with self.subTest(error=error.__name__):
+                client = self.Client(chooser)
+                with patch.object(secrets, "connect", return_value=client), self.assertRaises(error):
+                    secrets.choose_files(9222, "tab-1", lambda: setattr(client, "clicked", True), list(files))
+                self.assertNotIn("DOM.setFileInputFiles", [method for method, _ in client.calls])
+                self.assertEqual(client.calls[-1], ("Page.setInterceptFileChooserDialog", {"enabled": False}))
+
+    def test_wait_event_takes_the_watched_event_of_its_own_session(self):
+        other = json.dumps({"method": "Page.fileChooserOpened", "sessionId": "s2", "params": {"backendNodeId": 1}})
+        mine = json.dumps({"method": "Page.fileChooserOpened", "sessionId": "s1", "params": {"backendNodeId": 2}})
+        client = secrets.CdpClient("ws://browser.example.test:9222/test")
+        client._sock = FrameSocket(ws_frame(other.encode()) + ws_frame(mine.encode()))
+        client.watch("Page.fileChooserOpened")
+        self.assertEqual(client.wait_event("Page.fileChooserOpened", "s1", 1.0), {"backendNodeId": 2})
 
 
 class CdpFrameTest(unittest.TestCase):

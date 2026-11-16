@@ -9,6 +9,7 @@ attach to the tab themselves and run the check in an isolated world of that fram
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import socket
 import struct
 import time
 import urllib.request
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -109,6 +111,8 @@ class CdpClient:
         # What is left of an oversized frame being skipped, and the request it answers, if any.
         self._discard = 0
         self._discarded_reply: int | None = None
+        # Events a caller waits for, by method, with the session each came on.
+        self._events: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
 
     def connect(self) -> None:
         parts = urlsplit(self._ws_url)
@@ -240,6 +244,8 @@ class CdpClient:
         method = message.get("method")
         params = message.get("params") or {}
         session_id = message.get("sessionId")
+        if method in self._events:
+            self._events[method].append((session_id, params))
         if method == "Runtime.executionContextCreated":
             context = params.get("context")
             if isinstance(context, dict) and isinstance(context.get("id"), int):
@@ -261,6 +267,34 @@ class CdpClient:
                 self._frame_sessions[child] = session_id
         elif method == "Target.detachedFromTarget":
             self._frame_sessions.pop(params.get("sessionId"), None)
+
+    def watch(self, method: str) -> None:
+        """Keep each later event of this method for wait_event."""
+        self._events.setdefault(method, [])
+
+    def wait_event(self, method: str, session_id: str, timeout_s: float) -> dict[str, Any] | None:
+        """The params of the next watched event of this method on this session, or None in time."""
+        assert self._sock is not None
+        deadline = time.time() + timeout_s
+        while True:
+            for index, (sid, params) in enumerate(self._events.get(method, [])):
+                if sid == session_id:
+                    del self._events[method][index]
+                    return params
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            self._sock.settimeout(max(0.05, remaining))
+            try:
+                message = json.loads(self._read_frame().decode("utf-8"))
+            except socket.timeout:
+                continue
+            if not isinstance(message, dict):
+                continue
+            if message.get("id") in self._pending:
+                self._pending[int(message["id"])] = message
+            elif message.get("method"):
+                self._handle_event(message)
 
     def frame_sessions(self, parent_session_id: str) -> list[str]:
         return [child for child, parent in self._frame_sessions.items() if parent == parent_session_id]
@@ -882,6 +916,41 @@ def run_step(port: int, target_id: str, step: dict[str, Any]) -> None:
             fill_card(client, session_id, step)
         else:
             fill_focused(client, session_id, step)
+    finally:
+        client.close()
+
+
+class NoFileChooser(RuntimeError):
+    """The click opened no file chooser, so no file was attached."""
+
+
+def choose_files(port: int, target_id: str, click: Callable[[], Any], files: list[str],
+                 timeout_s: float = 5.0) -> None:
+    """Attach files through the file chooser that click opens on tab target_id.
+
+    Many pages, ChatGPT's among them, keep no file input in the document: their attach button makes
+    one only when pressed. Chromium hands the chooser to this client instead of showing a dialog,
+    and the files go into the input that opened it.
+    """
+    client = connect(port)
+    try:
+        session_id = client.call("Target.attachToTarget", {"targetId": target_id, "flatten": True})["sessionId"]
+        client.watch("Page.fileChooserOpened")
+        client.call("Page.enable", session_id=session_id)
+        client.call("Page.setInterceptFileChooserDialog", {"enabled": True}, session_id=session_id)
+        try:
+            click()
+            chooser = client.wait_event("Page.fileChooserOpened", session_id, timeout_s)
+            if chooser is None or not isinstance(chooser.get("backendNodeId"), int):
+                raise NoFileChooser("That control opened no file chooser, so nothing was attached. If a menu "
+                                    "opened, upload to its item that adds files.")
+            if len(files) > 1 and chooser.get("mode") != "selectMultiple":
+                raise RuntimeError("This file upload accepts one file")
+            client.call("DOM.setFileInputFiles", {"files": files, "backendNodeId": chooser["backendNodeId"]},
+                        session_id=session_id)
+        finally:
+            with contextlib.suppress(Exception):
+                client.call("Page.setInterceptFileChooserDialog", {"enabled": False}, session_id=session_id)
     finally:
         client.close()
 
