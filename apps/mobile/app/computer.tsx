@@ -215,6 +215,8 @@ export default function Computer() {
     autoBooted.current = botId;
     // Opened from a bot waiting on the user: go straight into control.
     if (control === "take") {
+      // Once only: a later bot switch or remount must not take control again.
+      router.setParams({ control: undefined });
       void openComputer({ takeControl: true });
       return;
     }
