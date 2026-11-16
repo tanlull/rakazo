@@ -71,6 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     fonts-dejavu-core \
     fonts-noto-cjk \
+    fonts-thai-tlwg \
     fonts-noto-color-emoji \
     locales \
     dbus-x11 \
