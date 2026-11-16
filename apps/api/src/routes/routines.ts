@@ -268,7 +268,13 @@ export function routinesRoutes(ctx: RouterContext) {
               userId: context.actor.userId,
               name: input.name,
               prompt: input.prompt,
-              ...(input.prompt === undefined ? {} : { promptByOwner: true }),
+              // Saving the prompt makes it the editor's; taking over without it leaves
+              // someone else's words, which must not manage the new owner's bots.
+              ...(input.prompt !== undefined
+                ? { promptByOwner: true }
+                : existing.userId === context.actor.userId
+                  ? {}
+                  : { promptByOwner: false }),
               crons: input.crons,
               timezone: input.timezone,
               active: input.active,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ownerContentHistory } from "./run-context.js";
 import { ownerRoutinePrompt } from "./run-routines.js";
 import type { ToolRequest } from "./run-tool-request.js";
 import { prepareToolRequest } from "./run-tool-request.js";
@@ -134,5 +135,70 @@ describe("bot management changes in an owner-written routine run", () => {
         fleetCall("set_child_instructions", { ownerRoutineRun: true, ...entered }),
       ).resolves.toMatchObject(blocked);
     }
+  });
+});
+
+describe("a routine run's earlier thread", () => {
+  const run = { id: "run-now", userId: "user-1" };
+  const cleanRuns = new Set(["run-clean"]);
+  const quoted = new Map<string, Message>();
+  type Message = {
+    id: string;
+    role: string;
+    runId: string | null;
+    authorUserId: string | null;
+    replyToMessageId: string | null;
+  };
+  const db = {
+    run: {
+      findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.filter((id) => cleanRuns.has(id)).map((id) => ({ id })),
+    },
+    message: {
+      findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.flatMap((id) => (quoted.has(id) ? [quoted.get(id)] : [])),
+    },
+  } as unknown as Parameters<typeof ownerContentHistory>[0];
+  const message = (fields: Partial<Message>): Message => ({
+    id: "m-1",
+    role: "user",
+    runId: null,
+    authorUserId: "user-1",
+    replyToMessageId: null,
+    ...fields,
+  });
+
+  it("is the owner's when only they and their clean runs wrote it", async () => {
+    await expect(
+      ownerContentHistory(db, run, [
+        message({}),
+        message({ id: "m-2", role: "bot", runId: "run-clean", authorUserId: null }),
+        message({ id: "m-3", role: "bot", runId: "run-now", authorUserId: null }),
+      ]),
+    ).resolves.toBe(true);
+  });
+
+  it("is outside content when a reply came from a run that read some", async () => {
+    await expect(
+      ownerContentHistory(db, run, [
+        message({ role: "bot", runId: "run-read-web", authorUserId: null }),
+      ]),
+    ).resolves.toBe(false);
+  });
+
+  it("is outside content with another person's or a system message", async () => {
+    await expect(ownerContentHistory(db, run, [message({ authorUserId: "user-2" })])).resolves.toBe(
+      false,
+    );
+    await expect(
+      ownerContentHistory(db, run, [message({ role: "system", authorUserId: null })]),
+    ).resolves.toBe(false);
+  });
+
+  it("checks a quoted message outside the window too", async () => {
+    quoted.set("old", message({ id: "old", role: "user", authorUserId: "user-2" }));
+    await expect(
+      ownerContentHistory(db, run, [message({ replyToMessageId: "old" })]),
+    ).resolves.toBe(false);
   });
 });
