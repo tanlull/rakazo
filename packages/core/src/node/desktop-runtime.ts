@@ -452,8 +452,7 @@ function browserLauncherCommand(
     '  if [ -n "$_kept" ]; then export LD_PRELOAD="$_kept"; else unset LD_PRELOAD; fi',
     "  unset _kept _rest _entry",
     "fi",
-    // Only for a browser that is not open yet: a running one owns its cookie database.
-    `if [ ! -L ${shellQuote(browserProfilePathForScreen(screenId, env))}/SingletonLock ] && command -v python3 >/dev/null; then`,
+    "if command -v python3 >/dev/null; then",
     `  python3 -c ${shellQuote(MERGE_SIGN_INS)} ${shellQuote(browserProfilePathForScreen(screenId, env))} ${shellQuote(env.browserProfilesDir)} >/dev/null 2>&1 || true`,
     "fi",
     `exec "$browser" --test-type --no-sandbox --disable-dev-shm-usage --disable-gpu --enable-unsafe-swiftshader --no-first-run --no-default-browser-check --disable-session-crashed-bubble --hide-crash-restore-bubble --password-store=basic --restore-last-session --start-maximized --remote-debugging-address=127.0.0.1 --remote-debugging-port=${layout.debugPort} --user-data-dir=${shellQuote(browserProfilePathForScreen(screenId, env))} "$@"`,
@@ -463,44 +462,76 @@ function browserLauncherCommand(
 /**
  * Bring the sign-ins other bots made on this computer into a browser about to start, so one
  * sign-in works for every bot sharing it. Every profile already lives in the same home and is
- * readable by any bot here, so this crosses no boundary. Newer cookies win; a profile that is
- * open or unreadable is skipped. Chromium encrypts cookies with the same fixed key on every
+ * readable by any bot here, so this crosses no boundary. Newer cookies win, a cookie this
+ * browser deleted since its last merge stays deleted, and a profile that is open or unreadable
+ * is skipped. Chromium encrypts cookies with the same fixed key on every
  * profile under --password-store=basic, so the rows copy as they are.
  */
-const MERGE_SIGN_INS = `import glob, os, sqlite3, sys
+const MERGE_SIGN_INS = `import glob, os, sqlite3, sys, time
 profile, root = sys.argv[1], sys.argv[2]
 target = os.path.join(profile, 'Default', 'Cookies')
 key = ['host_key', 'top_frame_site_key', 'name', 'path', 'source_scheme', 'source_port']
-sources = [path for path in glob.glob(os.path.join(root, 'chromium-bot-*', 'Default', 'Cookies'))
-           if os.path.dirname(os.path.dirname(path)) != profile]
-if not sources:
+def browser_open(path):
+    # A running browser owns its cookie database. SingletonLock can be missing after a supervisor
+    # restart, so a process still started on the profile counts too.
+    if os.path.lexists(os.path.join(path, 'SingletonLock')):
+        return True
+    flag = '--user-data-dir=' + path
+    for cmdline in glob.glob('/proc/[0-9]*/cmdline'):
+        try:
+            with open(cmdline, 'rb') as f:
+                if flag in f.read().decode('utf-8', 'replace').split('\\0'):
+                    return True
+        except OSError:
+            pass
+    return False
+if browser_open(profile):
     sys.exit(0)
+# Chromium counts microseconds from 1601. Only cookies changed since the last merge come in as
+# new rows, so one this browser deleted (a sign-out) stays deleted.
+now = int((time.time() + 11644473600) * 1000000)
+marker = os.path.join(profile, 'Default', 'Rakazo Sign-ins Merged')
+try:
+    with open(marker) as f:
+        since = int(f.read())
+except (OSError, ValueError):
+    since = None
+sources = sorted(path for path in glob.glob(os.path.join(root, 'chromium-bot-*', 'Default', 'Cookies'))
+                 if os.path.dirname(os.path.dirname(path)) != profile
+                 and not browser_open(os.path.dirname(os.path.dirname(path))))
 os.makedirs(os.path.dirname(target), exist_ok=True)
-for source in sorted(sources, key=os.path.getmtime, reverse=True):
+for source in sources:
     try:
-        src = sqlite3.connect('file:' + source + '?mode=ro&immutable=1', uri=True)
+        src = sqlite3.connect('file:' + source + '?mode=ro', uri=True)
         if not os.path.exists(target):
             dst = sqlite3.connect('file:' + target, uri=True)
             src.backup(dst)
-            dst.close()
             src.close()
+            if 'expires_utc' in [row[1] for row in dst.execute('PRAGMA table_info(cookies)')]:
+                dst.execute('DELETE FROM cookies WHERE expires_utc != 0 AND expires_utc < ?', (now,))
+            dst.commit()
+            dst.close()
             continue
         src.close()
         dst = sqlite3.connect('file:' + target, uri=True)
-        dst.execute("ATTACH DATABASE ? AS src", ('file:' + source + '?mode=ro&immutable=1',))
+        dst.execute("ATTACH DATABASE ? AS src", ('file:' + source + '?mode=ro',))
         columns = [row[1] for row in dst.execute('PRAGMA main.table_info(cookies)')]
         if [row[1] for row in dst.execute('PRAGMA src.table_info(cookies)')] != columns:
             dst.close()
             continue
         newer = 'last_update_utc' if 'last_update_utc' in columns else 'creation_utc'
         match = ' AND '.join('m.%s = s.%s' % (column, column) for column in key if column in columns)
+        added = 'm.rowid IS NULL' if since is None else '(m.rowid IS NULL AND s.%s > %d)' % (newer, since)
+        live = ' AND (s.expires_utc = 0 OR s.expires_utc > %d)' % now if 'expires_utc' in columns else ''
         dst.execute('INSERT OR REPLACE INTO main.cookies SELECT s.* FROM src.cookies s '
                     'LEFT JOIN main.cookies m ON ' + match +
-                    ' WHERE m.rowid IS NULL OR s.%s > m.%s' % (newer, newer))
+                    ' WHERE (' + added + ' OR s.%s > m.%s)' % (newer, newer) + live)
         dst.commit()
         dst.close()
     except Exception:
         pass
+with open(marker, 'w') as f:
+    f.write(str(now))
 `;
 
 export function mergeSignInsProgram() {
