@@ -130,7 +130,11 @@ import type {
   RunningHelper,
   RunState,
 } from "./run-context.js";
-import { restoreTurnCheckpointEffects, settleRunningHelpers } from "./run-context.js";
+import {
+  ownerContentHistory,
+  restoreTurnCheckpointEffects,
+  settleRunningHelpers,
+} from "./run-context.js";
 import { APPROVED_EFFECT_REPLAY_ORDER, buildApprovalContinuation } from "./run-effects.js";
 import {
   BOT_DIRECTORY_LIMIT,
@@ -1330,7 +1334,18 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         // Outbound destinations this run may reach without asking. See outboundSiteGate and
         // connectorReadRequiresApproval; approvals from earlier attempts are read back from effects.
         const searchResultUrls = new Set<string>();
-        const initialOutsideContent = Boolean(turnCheckpoint) || Boolean(checkpointLoadError);
+        const restoredTurn = Boolean(turnCheckpoint) || Boolean(checkpointLoadError);
+        // Earlier messages are outside content unless the owner or one of their clean runs wrote
+        // them; an unwatched routine run treats any other history as already read.
+        const ownerHistory =
+          (ownerStartedRun || ownerRoutineRun) &&
+          !restoredTurn &&
+          (await ownerContentHistory(deps.prisma, run, messages));
+        const initialOutsideContent = restoredTurn || (ownerRoutineRun && !ownerHistory);
+        // An earlier attempt may have read anything before it stopped.
+        const ownerContentOnly = ownerHistory && !current.startedAt;
+        if (ownerContentOnly || run.ownerContentOnly)
+          await deps.prisma.run.updateMany({ where: { id: run.id }, data: { ownerContentOnly } });
         const initiallyTainted = !ownerStartedRun || initialOutsideContent;
         // The creation intro only asks what the bot is for (see selectBuiltinToolsForRun),
         // so it gets no connector tools either.
@@ -1421,6 +1436,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           toolResults: new Map(),
           tainted: initiallyTainted,
           outsideContent: initialOutsideContent,
+          ownerContentOnly,
           ownerSettingsRefused: false,
           // A resumed turn replaces this with the baseline its saved prompt was built from.
           ownInstructionsBaseline: bot.instructions ?? "",

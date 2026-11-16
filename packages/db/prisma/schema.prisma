@@ -1257,6 +1257,9 @@ model Run {
   /// A scheduled routine run whose prompt a person wrote, decided when the run was queued: it
   /// may manage other bots until outside content enters it.
   ownerRoutinePrompt   Boolean           @default(false)
+  /// The run has seen only its owner's words so far; cleared when outside content enters it.
+  /// False when unknown, so its messages count as outside content for later routine runs.
+  ownerContentOnly     Boolean           @default(false)
   // Durable retry schedule; null means runnable immediately when queued.
   wakeAt               DateTime?
   // Server-side first visible output, preserved across attempts and resumes.

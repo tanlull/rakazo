@@ -89,7 +89,7 @@ export async function applyTool(
   } finally {
     // Editing its own profile returns only what this run wrote; a child's profile is another bot's.
     const ownProfile = name === "update_bot" && !argumentGiven(args.bot_id);
-    if (toolResultTaintsRun(name) && !ownProfile) markOutsideContent(ctx.state);
+    if (toolResultTaintsRun(name) && !ownProfile) await markOutsideContent(ctx);
   }
 }
 

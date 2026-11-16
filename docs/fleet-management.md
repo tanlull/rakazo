@@ -27,7 +27,9 @@ saved its prompt yourself in **Routines**. A routine whose prompt a bot wrote or
 taken over from another member, or one that watches for changes cannot. Neither can a routine with
 a webhook, GitHub, email or message trigger when that trigger starts it. Such a routine run can make
 changes only until it reads outside content (web pages, files, connector data or another bot's
-reply), in every approval mode, so it should change bots first and then hand out work.
+reply), in every approval mode, so it should change bots first and then hand out work. Its chat
+counts too: when an earlier reply there came from a run that read outside content, or someone else
+wrote in it, the run starts as if it had already read outside content.
 
 In Ask and Auto, a run that receives a messaging channel or webhook message while working
 cannot change the bots it manages for the rest of that run. Never ask skips this restriction.

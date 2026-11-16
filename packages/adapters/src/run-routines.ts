@@ -51,7 +51,10 @@ function routineNextRunIsNear(nextRunAt: Date | null, retryAt: number): boolean 
 
 /**
  * Whether a routine run queued now may manage other bots: a person saved the prompt it carries,
- * here and not through a bot, and it runs as that person. A watch's note is outside content.
+ * here and not through a bot, and it runs as that person. promptByOwner always means the
+ * routine's current owner saved it: every write that hands a routine to someone else clears it
+ * unless that same write saves the prompt. runUserId differs from the owner only for a test run
+ * another member starts. A watch's note is outside content.
  * Read under the routine's row lock, with the prompt the run takes.
  */
 export function ownerRoutinePrompt(
@@ -266,6 +269,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
     const routinePrompt =
       expandSkillReferencesInPrompt(current.prompt, skillRecords) +
       (watchTick?.run ? watchTick.note : "");
+    const byOwner = ownerRoutinePrompt(current, routine.userId, Boolean(watchTick?.run));
     const timerTick = routine.watch == null && !isOneShotRoutineCrons(routine.crons);
     const timerNonce = timerTick ? routineTimerNonce(routine.id, scheduledFor) : undefined;
     if (timerNonce) {
@@ -276,6 +280,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
         userId: routine.userId,
         threadId: thread.id,
         prompt: routinePrompt,
+        ownerRoutinePrompt: byOwner,
         ...routineRunModelPin(current),
       });
       if (pending) return { ...pending, coalesced: true };
@@ -306,7 +311,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
         status: "queued",
         trigger: "routine",
         routineId: routine.id,
-        ownerRoutinePrompt: ownerRoutinePrompt(current, routine.userId, Boolean(watchTick?.run)),
+        ownerRoutinePrompt: byOwner,
         clientNonce: timerNonce,
         ...routineRunModelPin(current),
       },
