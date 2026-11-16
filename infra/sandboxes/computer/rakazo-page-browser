@@ -1193,6 +1193,25 @@ class PageBrowser:
         self.dialog_opened = any(result.get("dialogOpened") is True for result in results)
         return results
 
+    def upload(self, ref: str, node: Node | None, files: list[str]) -> None:
+        """Files into a file input, or through the chooser a button or menu item opens."""
+        if node is None:
+            self.step([["upload", upload_target(ref), *files]])
+            return
+        (kind,) = self.step([["get", "attr", f"@{ref}", "type"]])
+        if str(kind.get("value") or "").lower() == "file":
+            self.step([["upload", f"@{ref}", *files]])
+            return
+        frame = node.frame
+
+        def click() -> None:
+            self.step([*([["scrollintoview", f"@{frame.ref}"]] if frame else []), ["click", f"@{ref}"]])
+
+        try:
+            page_secrets.choose_files(self.port, self.target, click, files)
+        except page_secrets.NoFileChooser as error:
+            raise Settled(str(error)) from None
+
     def fill(self, ref: str, text: str) -> None:
         _, kept = self.step([["fill", f"@{ref}", text], ["get", "value", f"@{ref}"]])
         value = kept.get("value")
@@ -1275,7 +1294,7 @@ class PageBrowser:
                     self.step([*([["scrollintoview", f"@{frame.ref}"]] if frame else []),
                                ["focus" if native_options(node) else "click", f"@{ref}"]])  # type: ignore[arg-type]
                 elif kind == "upload":
-                    self.step([["upload", upload_target(ref), *step["files"]]])
+                    self.upload(ref, node, step["files"])
                 elif kind == "fill" and native_options(node):  # type: ignore[arg-type]
                     self.step([["select", f"@{ref}", step["text"]]])
                 elif kind == "fill":
