@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -79,6 +79,45 @@ describe.skipIf(!python)("sharing sign-ins between a computer's browsers", () =>
     expect(readCookies(cookies("mail"))).toEqual([
       ".example.com old=kept",
       ".google.com SID=new-session",
+      ".shop.test cart=mine",
+    ]);
+  });
+
+  it("leaves out a browser that is open, and never writes into one", () => {
+    root = mkdtempSync(path.join(tmpdir(), "sign-ins-"));
+    writeCookies(cookies("chief"), [[".google.com", "SID", "chief-session", 10]]);
+    symlinkSync("host-1", path.join(root, "chromium-bot-chief", "SingletonLock"));
+    merge("mail");
+    expect(existsSync(cookies("mail"))).toBe(false);
+
+    rmSync(path.join(root, "chromium-bot-chief", "SingletonLock"));
+    writeCookies(cookies("mail"), [[".shop.test", "cart", "mine", 7]]);
+    symlinkSync("host-1", path.join(root, "chromium-bot-mail", "SingletonLock"));
+    merge("mail");
+    expect(readCookies(cookies("mail"))).toEqual([".shop.test cart=mine"]);
+  });
+
+  it("keeps a sign-out instead of bringing the cookie back", () => {
+    root = mkdtempSync(path.join(tmpdir(), "sign-ins-"));
+    writeCookies(cookies("chief"), [[".google.com", "SID", "chief-session", 10]]);
+    merge("mail");
+    // The mail bot signs out: its browser deletes the cookie.
+    rmSync(cookies("mail"));
+    writeCookies(cookies("mail"), []);
+    merge("mail");
+    expect(readCookies(cookies("mail"))).toEqual([]);
+  });
+
+  it("still brings in a sign-in made after the last merge", () => {
+    root = mkdtempSync(path.join(tmpdir(), "sign-ins-"));
+    writeCookies(cookies("mail"), [[".shop.test", "cart", "mine", 7]]);
+    merge("mail");
+    // Chromium time for a moment after the merge: microseconds since 1601.
+    const later = Math.round((Date.now() / 1000 + 11644473600 + 60) * 1_000_000);
+    writeCookies(cookies("chief"), [[".google.com", "SID", "chief-session", later]]);
+    merge("mail");
+    expect(readCookies(cookies("mail"))).toEqual([
+      ".google.com SID=chief-session",
       ".shop.test cart=mine",
     ]);
   });

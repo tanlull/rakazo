@@ -1153,6 +1153,16 @@ describe("updateScheduleFromTool", () => {
     });
   });
 
+  it("drops the owner's standing when it takes over without a new prompt", async () => {
+    const { updateMany, update } = setup();
+    await expect(update({ userId: "user-2", name: "Shop" })).resolves.toMatchObject({ ok: true });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { userId: "user-2", watchState: Prisma.DbNull, promptByOwner: false, name: "Shop" },
+      }),
+    );
+  });
+
   it("edits the prompt in place and keeps the timing", async () => {
     const { updateMany, enqueue, append, update } = setup();
     const prompt = "Order the usual; if cheddar is out of stock, skip it";

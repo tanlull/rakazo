@@ -221,7 +221,7 @@ async function savePage(ctx: RunContext, call: ToolCall) {
   if (page && !hasSource && !hasEdits && !title) {
     // The stored source may hold outside text an earlier run put in the page, so reading it
     // taints this run like any other outside content; saves only confirm this run's own write.
-    markOutsideContent(ctx.state);
+    await markOutsideContent(ctx);
     return {
       pageId: page.id,
       version: page.currentVersion,
