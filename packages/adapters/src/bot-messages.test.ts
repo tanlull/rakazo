@@ -1,3 +1,4 @@
+import { MAIN_BOT_SPAWN_KEY } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { RunHistoryWriteError } from "@rakazo/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,6 +80,8 @@ function deps(
   const prisma = {
     bot: {
       findFirst: vi.fn().mockResolvedValue(options.requesterArchived ? null : { id: "bot-target" }),
+      // The sender of these tests never reaches other Spaces.
+      findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi
         .fn()
         .mockResolvedValue(
@@ -160,6 +163,76 @@ describe("messaging another bot", () => {
     expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
     expect(harness.unreadMarks()).toHaveLength(0);
     expect(harness.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers to the owner's bot in another Space and runs it there", async () => {
+    const harness = deps();
+    const prisma = harness.deps.prisma as unknown as {
+      bot: { findMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+    };
+    prisma.bot.findUnique.mockResolvedValue({
+      userId: run.userId,
+      spawnKey: MAIN_BOT_SPAWN_KEY,
+      crossSpaceCommunication: true,
+    });
+    prisma.bot.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "bot-target",
+        name: "Analyst",
+        description: "",
+        spaceId: "space-other",
+        space: { name: "Clip" },
+        thread: { id: "thread-target" },
+      },
+    ]);
+    harness.tx.$queryRaw.mockImplementation(async (query: unknown) =>
+      String((query as { raw?: string[] }).raw ?? query).includes("crossSpaceCommunication")
+        ? [
+            { id: "bot-sender", spaceId: run.spaceId, crossSpaceCommunication: true },
+            { id: "bot-target", spaceId: "space-other", crossSpaceCommunication: true },
+          ]
+        : [{ id: "thread" }],
+    );
+
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "chart the q3 numbers",
+    });
+
+    expect(sent).toMatchObject({ ok: true, botId: "bot-target" });
+    expect(prisma.bot.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: run.userId, spaceId: { not: run.spaceId } }),
+      }),
+    );
+    for (const create of [harness.tx.task.create, harness.tx.run.create]) {
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ spaceId: "space-other", userId: run.userId }),
+        }),
+      );
+    }
+  });
+
+  it("reaches no other Space from a run someone else started", async () => {
+    const harness = deps({ bots: [] });
+    const prisma = harness.deps.prisma as unknown as {
+      bot: { findMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+    };
+    prisma.bot.findUnique.mockResolvedValue({
+      userId: "user-2",
+      spawnKey: MAIN_BOT_SPAWN_KEY,
+      crossSpaceCommunication: true,
+    });
+
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "chart the q3 numbers",
+    });
+
+    expect(sent).toMatchObject({ ok: false });
+    expect(prisma.bot.findMany).toHaveBeenCalledTimes(1);
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
   });
 
   it("puts sent files on the recipient's message, and only the text in the sender's echo", async () => {

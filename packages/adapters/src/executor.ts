@@ -84,6 +84,7 @@ import {
   persistLivePluginConnections,
   selectRunConnections,
 } from "./connection-context.js";
+import { crossSpaceTeammates } from "./cross-space-teammates.js";
 import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import type { ExecutorDeps } from "./executor-deps.js";
@@ -1668,7 +1669,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           : history;
         const runtimeHistory = [...historicalContext, ...historyWithImages];
         // Without a roster a bot only knows the bots it spawned itself.
-        const [teammates, groupDirectory] = await Promise.all([
+        const [teammates, otherSpaceTeammates, groupDirectory] = await Promise.all([
           thread.groupId
             ? []
             : deps.prisma.bot.findMany({
@@ -1682,10 +1683,24 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                 orderBy: { createdAt: "asc" },
                 take: BOT_DIRECTORY_LIMIT,
               }),
+          thread.groupId ? [] : crossSpaceTeammates(deps.prisma, run, bot),
           !thread.groupId ? loadBotGroupDirectory(deps.prisma, run) : undefined,
         ]);
         const botDirectory =
-          [renderBotDirectory(teammates), groupDirectory].filter(Boolean).join("\n\n") || undefined;
+          [
+            renderBotDirectory([
+              ...teammates,
+              // Named by Space so the bot can tell same-named bots apart.
+              ...otherSpaceTeammates.map((teammate) => ({
+                id: teammate.id,
+                name: teammate.name,
+                description: `In the ${teammate.spaceName} space. ${teammate.description}`,
+              })),
+            ]),
+            groupDirectory,
+          ]
+            .filter(Boolean)
+            .join("\n\n") || undefined;
 
         if (heldForTakeover) {
           const releasedCheckpoint = takeoverCheckpointOf(
