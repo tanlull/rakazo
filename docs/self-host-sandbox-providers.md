@@ -102,8 +102,9 @@ Resource ceilings, network isolation and shared folders for these computers are 
 
 ### Bot browser
 
-The published computer image uses Chromium. To use Google Chrome or Brave instead, build the image
-with `BROWSER=chrome` or `BROWSER=brave` and point Compose at it:
+The published computer image uses Brave, whose built-in ad and tracker blocking keeps bot pages
+lighter. To use Debian's Chromium or Google Chrome instead, build the image with
+`BROWSER=chromium` or `BROWSER=chrome` and point Compose at it:
 
 ```bash
 docker build --build-arg BROWSER=chrome -t rakazo-computer-chrome infra/sandboxes/computer
@@ -116,8 +117,9 @@ RAKAZO_COMPUTER_IMAGE_TAG=latest
 
 The image holds one browser, and `rakazo-browser` launches whichever is installed. A locally built
 image is not on a registry, so start the stack with `bash install-images.sh --pull-never` after
-pulling the other images once. Brave's Rewards, Wallet, Leo, VPN and News are disabled by managed
-policy.
+pulling the other images once. All three share one profile format, so a computer keeps its cookies
+and sign-ins when its image changes browser. Brave's Rewards, Wallet, Leo, VPN and News are
+disabled by managed policy.
 
 `BROWSER=chrome` installs Google Chrome stable from Google's apt repository and checks Google's
 signing key by fingerprint. Google publishes Chrome for amd64 only, so the build fails on other
