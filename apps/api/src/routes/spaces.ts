@@ -37,7 +37,9 @@ import {
   setSpaceSettingOverride,
   spaceSettingOverrides,
 } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { otherSpaceOfBot } from "../bot-space.js";
+import { ensureMainBot } from "../main-bot.js";
 import type { RouterDeps } from "../router.js";
 import { listRoutinesDto } from "../routines.js";
 import { deleteSpaceWithContent } from "../space-deletion.js";
@@ -333,6 +335,9 @@ export function spacesRoutes(ctx: RouterContext) {
     },
     bootstrap: authed.bootstrap.handler(async ({ context, input }) => {
       const actor = context.actor;
+      await ensureMainBot(deps, repos, actor).catch((error) => {
+        getLogger().error("main bot ensure", error);
+      });
       const [me, navigation, archivedBots, archivedGroups] = await Promise.all([
         meDto(deps, actor),
         spaceNavigationDto(deps, actor, repos, groupRepos),

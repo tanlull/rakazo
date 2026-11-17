@@ -264,7 +264,7 @@ async function prepareAccount(bench: Bench, sizes: number[]): Promise<Account> {
     if (!response.ok()) throw new Error(`sign-up ${response.status()}: ${await response.text()}`);
     await page.goto("/onboarding");
     const skip = page.getByRole("button", { name: "Skip", exact: true });
-    const composer = page.getByRole("combobox", { name: "Message Chief" });
+    const composer = page.getByRole("combobox", { name: "Message Main Bot" });
     await skip.or(composer).first().waitFor({ timeout: 30_000 });
     if (await skip.isVisible()) await skip.click();
     await composer.waitFor({ timeout: 30_000 });
@@ -289,7 +289,7 @@ async function prepareAccount(bench: Bench, sizes: number[]): Promise<Account> {
     return {
       storageState: await context.storageState(),
       userId: user.id,
-      homeBotName: "Chief",
+      homeBotName: "Main Bot",
       threads,
     };
   } finally {

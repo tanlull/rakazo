@@ -1,5 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { Bot, Group } from "@rakazo/contracts";
+import { isMainBot } from "@rakazo/contracts";
 import {
   BotAvatar,
   Button,
@@ -39,7 +40,7 @@ export function ArchivedChats({
     name: string,
     avatar: ReactNode,
     restore: () => Promise<unknown>,
-    remove: () => void,
+    remove: (() => void) | undefined,
   ) => {
     const onRestore = () => void restore().then(() => refreshBots(true));
     return (
@@ -64,10 +65,12 @@ export function ArchivedChats({
             <ArchiveRestore />
             <Trans>Restore</Trans>
           </ContextMenuItem>
-          <ContextMenuItem variant="destructive" onClick={remove}>
-            <Trash2 />
-            <Trans>Delete</Trans>
-          </ContextMenuItem>
+          {remove ? (
+            <ContextMenuItem variant="destructive" onClick={remove}>
+              <Trash2 />
+              <Trans>Delete</Trans>
+            </ContextMenuItem>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
     );
@@ -89,7 +92,7 @@ export function ArchivedChats({
             status={bot.status}
           />,
           () => rpc.bots.restore({ botId: bot.id }),
-          () => setDeleteTarget(bot),
+          isMainBot(bot) ? undefined : () => setDeleteTarget(bot),
         ),
       )}
       {archivedGroups.map((group) =>

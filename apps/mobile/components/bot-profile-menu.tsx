@@ -18,14 +18,18 @@ export type BotProfileAction = {
 };
 
 /** The bot's less common actions, in its profile's "…" menu. */
-export function useBotProfileActions(botId: string, name: string): BotProfileAction[] {
+export function useBotProfileActions(
+  botId: string,
+  name: string,
+  deletable = true,
+): BotProfileAction[] {
   const { t } = useLingui();
   const router = useRouter();
   function leave() {
     router.dismissAll();
     router.replace("/");
   }
-  return [
+  const actions: BotProfileAction[] = [
     {
       id: "clear",
       text: t`Clear conversation`,
@@ -51,6 +55,7 @@ export function useBotProfileActions(botId: string, name: string): BotProfileAct
         }),
     },
   ];
+  return deletable ? actions : actions.filter((action) => action.id !== "delete");
 }
 
 /** The profile's "…" header menu: a native bar menu on iOS, a native popup menu elsewhere. */

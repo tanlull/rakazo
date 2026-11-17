@@ -17,9 +17,9 @@ test("shows peer lines in transcript and opens view-only peer chat", async ({ pa
     notifyOnFinish: true,
   });
   await page.reload();
-  await expect(page.getByRole("combobox", { name: "Message Chief" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Message Main Bot" })).toBeVisible();
 
-  const composer = page.getByRole("combobox", { name: "Message Chief" });
+  const composer = page.getByRole("combobox", { name: "Message Main Bot" });
   await composer.fill("message the bot named Researcher saying peer-exchange-alpha");
   await composer.press("Enter");
 
@@ -58,7 +58,7 @@ test("shows peer lines in transcript and opens view-only peer chat", async ({ pa
   await expect(chip).not.toContainText("{peer}");
   // User bubble still contains the phrase; peer body must not appear outside the chip.
   await expect(chip).not.toContainText("peer-exchange-alpha");
-  // Only the user's ask and Chief's own relay of Researcher's result carry the phrase.
+  // Only the user's ask and Main Bot's own relay of Researcher's result carry the phrase.
   await expect(transcript.getByText(/^Here's what Researcher found: /)).toBeVisible({
     timeout: 60_000,
   });
@@ -91,7 +91,7 @@ test("shows peer lines in transcript and opens view-only peer chat", async ({ pa
   await chip.press("Enter");
   const view = page.getByTestId("peer-conversation-view");
   await expect(view).toBeVisible();
-  await expect(view.getByRole("heading", { name: /Chief\s*Researcher/ })).toBeVisible();
+  await expect(view.getByRole("heading", { name: /Main Bot\s*Researcher/ })).toBeVisible();
   await expect(transcript.getByTestId("peer-replies-toggle")).toHaveCount(0);
   const close = view.getByRole("button", { name: "Close", exact: true });
   await expect(close).toHaveCount(1);
@@ -215,8 +215,8 @@ const foldedReplyText = "on it. i will work this in the background";
 const relayText = "Here's what Researcher found: done. i handled: peer-fold-alpha";
 
 /**
- * Chief messages Researcher. Chief relays Researcher's result to the user as its own reply, under
- * its "Messaged Researcher" receipt; Researcher's own work on Chief's request folds under its
+ * Main Bot messages Researcher. Main Bot relays Researcher's result to the user as its own reply, under
+ * its "Messaged Researcher" receipt; Researcher's own work on Main Bot's request folds under its
  * marker in Researcher's chat.
  */
 async function openFoldedPeerReply(page: Page, name: string, testInfo: TestInfo) {
@@ -232,11 +232,11 @@ async function openFoldedPeerReply(page: Page, name: string, testInfo: TestInfo)
     notifyOnFinish: true,
   });
   await page.reload();
-  const chiefComposer = page.getByRole("combobox", { name: "Message Chief" });
+  const chiefComposer = page.getByRole("combobox", { name: "Message Main Bot" });
   await chiefComposer.fill("message the bot named Researcher saying peer-fold-alpha");
   await chiefComposer.press("Enter");
 
-  // Researcher's result wakes Chief, which relays it to the user as an ordinary reply. Its
+  // Researcher's result wakes Main Bot, which relays it to the user as an ordinary reply. Its
   // marker merges into the "Messaged Researcher" receipt, which already opens the exchange.
   const transcript = page.getByTestId("transcript");
   await expect(transcript.getByText(relayText)).toBeVisible({ timeout: 60_000 });
@@ -247,17 +247,17 @@ async function openFoldedPeerReply(page: Page, name: string, testInfo: TestInfo)
   await expect(
     transcript.getByTestId("peer-receipt-chip").filter({ hasText: "Message from Researcher" }),
   ).toHaveCount(0);
-  // Researcher's own words stay in the exchange; only Chief's relay reaches the user.
+  // Researcher's own words stay in the exchange; only Main Bot's relay reaches the user.
   await expect(transcript.getByText(foldedReplyText)).toHaveCount(0);
   await expect(transcript.getByTestId("message-bot-bubble").last()).toContainText(relayText);
   await captureScreenshot(page, testInfo, "peer-result-relay-inline");
 
-  // Researcher's reply to Chief's request is bot-to-bot work: it folds in Researcher's chat.
+  // Researcher's reply to Main Bot's request is bot-to-bot work: it folds in Researcher's chat.
   await page.goto(`/app/${researcher.id}`);
   await expect(
     transcript
       .getByTestId("peer-receipt-chip")
-      .filter({ hasText: /Message from Chief|messages with Chief/ }),
+      .filter({ hasText: /Message from Main Bot|messages with Main Bot/ }),
   ).toBeVisible({ timeout: 60_000 });
   const reply = transcript.getByText(foldedReplyText);
   await expect(reply).toHaveCount(0);
@@ -274,7 +274,10 @@ test(
       testInfo,
     );
 
-    const line = transcript.getByTestId("peer-receipt-chip").filter({ hasText: "Chief" }).first();
+    const line = transcript
+      .getByTestId("peer-receipt-chip")
+      .filter({ hasText: "Main Bot" })
+      .first();
     await expect(transcript.getByTestId("peer-replies-toggle")).toHaveCount(0);
     await captureScreenshot(page, testInfo, "peer-line-folded");
     await line.click();
@@ -289,7 +292,7 @@ test(
     await page.getByTestId("sidebar-search-trigger").click();
     const search = page.getByTestId("sidebar-search").getByRole("textbox");
     await search.fill(foldedReplyText);
-    // Researcher's "Messaged Chief" receipt also matches; jump to the folded reply itself.
+    // Researcher's "Messaged Main Bot" receipt also matches; jump to the folded reply itself.
     await page
       .getByRole("button")
       .filter({
@@ -315,7 +318,7 @@ test(
     await expect(
       researcherTranscript
         .getByTestId("peer-receipt-chip")
-        .filter({ hasText: /Message from Chief|messages with Chief/ }),
+        .filter({ hasText: /Message from Main Bot|messages with Main Bot/ }),
     ).toHaveCount(2);
     await expect(
       researcherTranscript.getByText("i need a decision before i continue."),
@@ -346,11 +349,11 @@ test("answers a message sent while the bot works on another bot's request", asyn
     notifyOnFinish: true,
   });
   await page.reload();
-  const chief = page.getByRole("combobox", { name: "Message Chief" });
+  const chief = page.getByRole("combobox", { name: "Message Main Bot" });
   await chief.fill("message the bot named Researcher saying work for 8 seconds");
   await chief.press("Enter");
 
-  // Researcher is busy with Chief's request when the user writes to it.
+  // Researcher is busy with Main Bot's request when the user writes to it.
   await expect
     .poll(
       async () => {
@@ -375,7 +378,7 @@ test("answers a message sent while the bot works on another bot's request", asyn
   await expect(
     transcript.getByTestId("message-user-bubble").filter({ hasText: "peer-busy-alpha" }),
   ).toBeVisible({ timeout: 30_000 });
-  // The message landed while Chief's request was still running, so it was held behind it.
+  // The message landed while Main Bot's request was still running, so it was held behind it.
   const held = await rpc<{
     messages: Array<{
       role: string;
@@ -391,15 +394,15 @@ test("answers a message sent while the bot works on another bot's request", asyn
   );
   expect(peerRunId).toBeTruthy();
   expect(sent?.runId).toBe(peerRunId);
-  // The answer is the user's own: inline in the chat, never folded under Chief's request.
+  // The answer is the user's own: inline in the chat, never folded under Main Bot's request.
   const answer = transcript.getByText("i will keep that in memory.");
   await expect(answer).toBeVisible({ timeout: 60_000 });
   await captureScreenshot(page, testInfo, "peer-busy-answer-inline");
 
-  // Only Chief's request goes back to Chief, not the answer to the user.
+  // Only Main Bot's request goes back to Main Bot, not the answer to the user.
   await page.goto("/app");
   await page.waitForURL(/\/app\/[^/]+$/);
-  // Chief relays Researcher's result as its own reply; the result's marker merges into the
+  // Main Bot relays Researcher's result as its own reply; the result's marker merges into the
   // "Messaged Researcher" receipt.
   const chiefTranscript = page.getByTestId("transcript");
   await expect(

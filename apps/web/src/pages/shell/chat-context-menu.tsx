@@ -1,4 +1,5 @@
 import type { Bot, BotSection, Group } from "@rakazo/contracts";
+import { isMainBot } from "@rakazo/contracts";
 import { chatSnoozed } from "@rakazo/core";
 import { lazyOverlay } from "../../components/ErrorBoundary";
 import type { createSpaceRpc } from "../../lib/rpc";
@@ -117,11 +118,15 @@ export function ChatContextMenu({
           : rpc.groups.archive({ groupId: group!.id });
         void request.then(() => refreshBots(true));
       }}
-      onDelete={() => {
-        if (bot) dialogs.setDeleteTarget(bot);
-        else dialogs.setDeleteGroupTarget(group!);
-        onClose();
-      }}
+      onDelete={
+        bot && isMainBot(bot)
+          ? undefined
+          : () => {
+              if (bot) dialogs.setDeleteTarget(bot);
+              else dialogs.setDeleteGroupTarget(group!);
+              onClose();
+            }
+      }
     />
   );
 }

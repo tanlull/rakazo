@@ -234,7 +234,7 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
         );
       });
     const connectHeading = page.getByRole("heading", { name: "Connect a model" });
-    const composer = page.getByRole("combobox", { name: "Message Chief" });
+    const composer = page.getByRole("combobox", { name: "Message Main Bot" });
     await connectHeading.or(composer).waitFor({ timeout: 20_000 });
     if (await connectHeading.isVisible().catch(() => false)) {
       throw new Error(
@@ -250,7 +250,7 @@ async function prepareAuthenticatedProfile(benchmark: BenchmarkContext, profile:
 
 async function seedBenchmarkThread(prisma: PrismaClient) {
   const bot = await prisma.bot.findFirst({
-    where: { name: "Chief" },
+    where: { name: "Main Bot" },
     select: { thread: { select: { id: true } } },
   });
   const threadId = bot?.thread?.id;
@@ -464,7 +464,7 @@ async function measureInteractions(app: ElectronApplication, page: Page) {
   await page.waitForTimeout(200);
 
   const typingBefore = await cdpMetrics(session);
-  const composer = page.getByPlaceholder(/Message Chief/);
+  const composer = page.getByPlaceholder(/Message Main Bot/);
   await composer.fill("");
   await composer.focus();
   const characterCount = 40;
