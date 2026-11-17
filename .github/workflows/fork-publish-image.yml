@@ -1,8 +1,9 @@
 name: fork-publish-image
 
 # This fork's own deploys: every push to main publishes ghcr.io/<owner>/rakazo/app:edge and
-# sha-<commit>, which ~/deploy.sh on the server pulls. The upstream repository publishes through
-# ci.yml instead, so this never runs there.
+# sha-<commit>, and deploys the commit to the server, which builds and runs it from source
+# (infra/compose/deploy-source.sh) without waiting for the image. The upstream repository
+# publishes through ci.yml instead, so this never runs there.
 on:
   push:
     branches: [main]
@@ -31,7 +32,6 @@ jobs:
   # The server's key for this job may only run its deploy script (a forced command), so the
   # secret cannot open a shell there. Skips itself until the server secrets are set.
   deploy:
-    needs: publish
     if: github.repository != 'elie222/rakazo' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -51,4 +51,4 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            -o ServerAliveInterval=30 "$DEPLOY_USER@$DEPLOY_HOST"
+            -o ServerAliveInterval=30 "$DEPLOY_USER@$DEPLOY_HOST" "deploy ${{ github.sha }}"
