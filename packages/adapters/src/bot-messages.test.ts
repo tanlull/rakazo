@@ -31,6 +31,9 @@ function deps(
     uniqueConflictOnCommit?: boolean;
     transactionConflictOnce?: boolean;
     deletingSpace?: boolean;
+    threadMessages?: unknown[];
+    runs?: unknown[];
+    scratchpad?: unknown[];
   } = {},
 ) {
   const enqueue = vi.fn().mockResolvedValue(undefined);
@@ -87,8 +90,19 @@ function deps(
           ],
         ),
     },
-    message: { findUnique: messageFindUnique, findMany: vi.fn().mockResolvedValue([]) },
-    run: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    message: {
+      findUnique: messageFindUnique,
+      findMany: vi.fn(async (args?: { where?: { threadId?: string } }) =>
+        args?.where?.threadId && options.threadMessages ? options.threadMessages : [],
+      ),
+    },
+    run: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findMany: vi.fn().mockResolvedValue(options.runs ?? []),
+    },
+    scratchpadItem: {
+      findMany: vi.fn().mockResolvedValue(options.scratchpad ?? []),
+    },
     $transaction: vi.fn(async (fn: (client: unknown) => unknown) => {
       transactionAttempts += 1;
       if (options.transactionConflictOnce && transactionAttempts === 1) {
@@ -482,6 +496,114 @@ describe("messaging another bot", () => {
       { bot_id: "bot-target", message: "still working", intent: "status" },
     );
     expect(sent.ok).toBe(false);
+  });
+
+  it("keeps a returned result on the request hop so another batch still fits", async () => {
+    const harness = deps({
+      hopBlocks: [
+        {
+          kind: "bot_message_received",
+          fromBotId: "bot-target",
+          fromBotName: "Analyst",
+          text: "frames 1-2",
+          hop: 6,
+          intent: "request",
+          returnToMessageId: "message-request",
+        },
+      ],
+    });
+    const sent = await messageBot(
+      harness.deps,
+      { ...run, sourceMessageId: "message-source" },
+      sender,
+      { bot_id: "bot-target", message: "frames 1-2 are ready", intent: "result" },
+    );
+    expect(sent.ok).toBe(true);
+    expect(harness.tx.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({ kind: "bot_message_received", hop: 6 }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("puts the original request and open plan on a delegated result wake", async () => {
+    const harness = deps({
+      hopBlocks: [
+        {
+          kind: "bot_message_received",
+          fromBotId: "bot-target",
+          fromBotName: "Analyst",
+          text: "Draw the frames.",
+          hop: 1,
+          intent: "request",
+          returnToMessageId: "message-request",
+        },
+      ],
+      threadMessages: [
+        {
+          id: "later-user",
+          role: "user",
+          blocks: [{ kind: "text", text: "any update?" }],
+          runId: null,
+          replyToMessageId: null,
+        },
+        {
+          id: "message-request",
+          role: "bot",
+          blocks: [
+            {
+              kind: "bot_message_sent",
+              toBotId: "bot-sender",
+              toBotName: "Researcher",
+              text: "Frames 1-2. Wait for the next batch.",
+              intent: "request",
+            },
+          ],
+          runId: "coord-run",
+          replyToMessageId: null,
+        },
+        {
+          id: "user-1",
+          role: "user",
+          blocks: [{ kind: "text", text: "Draw 11 frames, two at a time." }],
+          runId: null,
+          replyToMessageId: null,
+        },
+      ],
+      runs: [{ id: "coord-run", sourceMessageId: "user-1" }],
+      scratchpad: [
+        {
+          id: "todo-1",
+          botId: "bot-target",
+          title: "Frames 3-11",
+          status: "open",
+          notes: "batch 2 next",
+          createdAt: new Date("2026-01-01T00:00:00Z"),
+          updatedAt: new Date("2026-01-01T00:00:00Z"),
+        },
+      ],
+    });
+    const sent = await messageBot(
+      harness.deps,
+      { ...run, sourceMessageId: "message-source" },
+      sender,
+      { bot_id: "bot-target", message: "Frames 1-2 are ready.", intent: "result" },
+      { allowTerminalSource: true },
+    );
+    expect(sent.ok).toBe(true);
+    const created = harness.tx.task.create.mock.calls[0]?.[0] as
+      | { data: { prompt: string } }
+      | undefined;
+    const prompt = created?.data?.prompt ?? "";
+    expect(prompt).toContain("Draw 11 frames, two at a time.");
+    expect(prompt).not.toContain("any update?");
+    expect(prompt).toContain("Frames 3-11");
+    expect(prompt).toContain("Frames 1-2. Wait for the next batch.");
+    expect(prompt).toContain("dispatch it now");
   });
 
   it("raises the chain limit from BOT_MESSAGE_MAX_HOPS", async () => {

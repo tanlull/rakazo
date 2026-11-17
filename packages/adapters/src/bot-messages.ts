@@ -5,9 +5,9 @@ import {
   BOT_MESSAGE_TOO_LONG,
   botMessageContext,
   botMessageHopExhausted,
+  botMessageHopForDelivery,
   buildBotMessageWakePrompt,
   clampBotMessage,
-  nextBotMessageHop,
   resolveBotAddress,
 } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
@@ -20,6 +20,7 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { loadDelegatedWakeContext } from "./delegation-context.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { runLeaseFor } from "./run-messages.js";
 
@@ -97,7 +98,6 @@ export async function messageBot(
 
   const sourceContext = await loadBotMessageContext(deps.prisma, run.sourceMessageId);
   const intent = input.intent ?? "request";
-  const hop = nextBotMessageHop(sourceContext?.hop);
 
   const candidates = await deps.prisma.bot.findMany({
     where: { spaceId: run.spaceId, archivedAt: null },
@@ -111,13 +111,19 @@ export async function messageBot(
   if (target.id === sender.id) return { ok: false as const, error: "a bot cannot message itself" };
   if (!target.thread)
     return { ok: false as const, error: `${target.name} has no chat to deliver to` };
-  const returnsToSender =
-    options?.allowTerminalSource === true &&
+  const returningToRequester =
     (intent === "result" || intent === "status") &&
     (sourceContext?.intent === undefined ||
       sourceContext.intent === "request" ||
       sourceContext.intent === "question") &&
     sourceContext?.fromBotId === target.id;
+  // Only a finished result keeps the request's hop. A status still advances it,
+  // so a stream of progress notes cannot talk forever at the limit.
+  const hop = botMessageHopForDelivery(
+    sourceContext?.hop,
+    intent === "result" && Boolean(returningToRequester),
+  );
+  const returnsToSender = options?.allowTerminalSource === true && Boolean(returningToRequester);
   if (botMessageHopExhausted(hop) && !returnsToSender) {
     return {
       ok: false as const,
@@ -141,7 +147,26 @@ export async function messageBot(
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
 
-  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent });
+  let continuation: Awaited<ReturnType<typeof loadDelegatedWakeContext>> | undefined;
+  if (returningToRequester) {
+    try {
+      continuation = await loadDelegatedWakeContext(deps.prisma, {
+        spaceId: run.spaceId,
+        botId: target.id,
+        threadId: target.thread.id,
+        returnToMessageId: sourceContext?.returnToMessageId,
+      });
+    } catch (error) {
+      // The result still has to wake the coordinator. Context is an aid, not a gate.
+      getLogger().warn("delegated wake context", { error });
+    }
+  }
+  const wakePrompt = buildBotMessageWakePrompt({
+    from: sender,
+    text: message,
+    intent,
+    continuation,
+  });
   const outboundBlock: MessageBlock = {
     kind: "bot_message_sent",
     toBotId: target.id,
