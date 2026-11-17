@@ -333,6 +333,11 @@ app.post("/computers", async (c) => {
         try {
           if (existing) {
             await withComputerScreenLock(existing.id, async () => {
+              // A forced remove kills the browsers, so close them first. A computer too
+              // broken to close them is still replaced.
+              await closeRunningBotBrowsers(existing).catch((error) => {
+                getLogger().error("computer browsers failed to close before replace", error);
+              });
               try {
                 await existing.remove({ force: true });
               } catch (error) {
@@ -1131,6 +1136,25 @@ app.delete("/computers/:id/screen", async (c) => {
 const KILL_WAIT_ATTEMPTS = 30;
 const KILL_WAIT_MS = 1_000;
 
+/**
+ * Close every browser profile on the home volume with Browser.close, so Chromium writes its
+ * cookie database before the container goes. Killing it instead drops the latest cookies, and
+ * sites that rotate sign-in tokens then see an old one and end the session.
+ */
+async function closeBotBrowsers(container: Docker.Container): Promise<void> {
+  // Every profile on the home volume, not only screens still held in memory.
+  const result = await runContainerCommand(container, [
+    "bash",
+    "-c",
+    quiesceBrowserProfilesCommand(),
+  ]);
+  if (result.code !== 0) throw new Error(result.stderr || "bot browsers failed to stop");
+}
+
+async function closeRunningBotBrowsers(container: Docker.Container): Promise<void> {
+  if ((await container.inspect()).State.Running) await closeBotBrowsers(container);
+}
+
 /** A container too starved to exit when asked is killed, so a stop always ends it. */
 async function stopOrKill(container: Docker.Container): Promise<void> {
   try {
@@ -1162,14 +1186,7 @@ app.post("/computers/:id/stop", async (c) => {
         const info = await container.inspect();
         if (info.State.Running) {
           try {
-            // Every profile on the home volume, not only screens still held in memory.
-            const checkpoint = await runContainerCommand(container, [
-              "bash",
-              "-c",
-              quiesceBrowserProfilesCommand(),
-            ]);
-            if (checkpoint.code !== 0)
-              throw new Error(checkpoint.stderr || "bot browsers failed to stop");
+            await closeBotBrowsers(container);
           } finally {
             // Failed profiles remain on the durable home for recovery after restart.
             await stopOrKill(container);
