@@ -1035,6 +1035,10 @@ describe("space computer limit enforcement", () => {
         NetworkSettings: { Networks: {} },
       }),
       start: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn(async (_options: { Cmd?: string[] }) => ({
+        start: async () => Readable.from([]),
+        inspect: async () => ({ ExitCode: 0 }),
+      })),
       remove: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -1064,6 +1068,54 @@ describe("space computer limit enforcement", () => {
       id: "new-container-id",
       resumed: false,
     });
+    expect(existing.remove).toHaveBeenCalledWith({ force: true });
+    // Its browsers close first, so their latest cookies reach disk.
+    expect(String(existing.exec.mock.calls[0]?.[0]?.Cmd?.[2] ?? "")).toContain("Browser.close");
+    expect(existing.exec.mock.invocationCallOrder[0]).toBeLessThan(
+      existing.remove.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.docker.createContainer).toHaveBeenCalled();
+  });
+
+  it("still replaces a running computer whose browsers fail to close", async () => {
+    setupContainerFixture();
+    const existing = {
+      id: "stuck-container",
+      inspect: vi.fn().mockResolvedValue({
+        Image: "image",
+        Config: {
+          User: hostComputerUser(process.getuid?.(), process.getgid?.()),
+          Labels: {
+            "rakazo.managed": "true",
+            "rakazo.botId": "bot-stuck",
+            "rakazo.spaceId": "space-1",
+          },
+        },
+        State: { Running: true },
+        HostConfig: {
+          NetworkMode: computerNetworkNameFor("bot-stuck"),
+          PortBindings: {},
+          Mounts: [],
+        },
+        NetworkSettings: { Networks: {} },
+      }),
+      start: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn(async () => {
+        throw new Error("container is not responding");
+      }),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.docker.getContainer.mockReturnValue(existing);
+    mocks.docker.listContainers.mockImplementation(
+      async (opts?: { filters?: { label?: string[] } }) =>
+        opts?.filters?.label?.includes("rakazo.botId=bot-stuck")
+          ? [{ Id: existing.id, Labels: (await existing.inspect()).Config.Labels }]
+          : [],
+    );
+
+    const response = await provisionBot("bot-stuck", "space-1");
+    expect(response.status).toBe(200);
+    expect(existing.exec).toHaveBeenCalled();
     expect(existing.remove).toHaveBeenCalledWith({ force: true });
     expect(mocks.docker.createContainer).toHaveBeenCalled();
   });
