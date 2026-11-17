@@ -1,6 +1,8 @@
-# The bot browser: chromium by default, or BROWSER=chrome (Google Chrome, amd64
-# only) or BROWSER=brave (installed below).
-ARG BROWSER=chromium
+# The bot browser: brave by default (installed below), or BROWSER=chromium
+# (Debian's) or BROWSER=chrome (Google Chrome, amd64 only). Brave's built-in
+# ad and tracker blocking keeps bot pages lighter. All three read the same
+# profile format, so switching keeps existing sign-ins.
+ARG BROWSER=brave
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS capture-builder
 COPY apt-security.sh /tmp/apt-security.sh
 RUN /tmp/apt-security.sh && rm -f /tmp/apt-security.sh
@@ -108,9 +110,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && printf '%s\n' '#!/bin/sh' 'exec xsetroot -solid "#111113" "$@"' > /usr/bin/fbsetbg \
   && chmod +x /usr/bin/fbsetbg \
   && ln -sfn /bin/true /usr/bin/xmessage
-# Google Chrome or Brave replaces Chromium only when built with BROWSER=chrome
-# or BROWSER=brave. The default build installs Chromium above, so this step does
-# nothing for it. repo_add_once=false keeps Chrome's package from adding a
+# Brave (the default) or Google Chrome is installed here; a BROWSER=chromium
+# build installs Debian's Chromium above, so this step does nothing for it.
+# repo_add_once=false keeps Chrome's package from adding a
 # second repository entry without the pinned key.
 COPY --from=chrome-keyring /google-chrome.gpg /usr/share/keyrings/google-chrome.gpg
 RUN set -eux; \
