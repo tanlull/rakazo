@@ -342,9 +342,11 @@ describePostgres("moving routines with the account timezone (PostgreSQL)", () =>
         const moving = ops.track(save(userId, "Europe/London", spaces[0]!));
         // Only once the save provably waits on the claimed row does the claim advance it.
         await waitForBlockedOn(monitor, own[0]!.pid, "the zone save", deadline);
+        // The column is a timestamp without zone holding UTC, as Prisma writes it. A Date
+        // parameter would be sent in the machine's local zone, so pass the UTC text.
         await client.query('UPDATE routines SET "nextRunAt" = $2 WHERE id = $1', [
           routine.id,
-          claimed,
+          claimed.toISOString(),
         ]);
         await client.query("COMMIT");
         await moving;
