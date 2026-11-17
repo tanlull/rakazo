@@ -130,7 +130,11 @@ import type {
   RunningHelper,
   RunState,
 } from "./run-context.js";
-import { restoreTurnCheckpointEffects, settleRunningHelpers } from "./run-context.js";
+import {
+  ownerContentHistory,
+  restoreTurnCheckpointEffects,
+  settleRunningHelpers,
+} from "./run-context.js";
 import { APPROVED_EFFECT_REPLAY_ORDER, buildApprovalContinuation } from "./run-effects.js";
 import {
   BOT_DIRECTORY_LIMIT,
@@ -1207,6 +1211,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const sourceClientNonce = sourceMessage?.clientNonce ?? null;
         // A follow-up can be queued by a bot (group handoffs); only the user's own counts.
         const ownerStartedRun = isOwnerStartedRun(run.trigger, sourceMessage?.role === "user");
+        const ownerRoutineRun = run.trigger === "routine" && run.ownerRoutinePrompt;
         // A hang-up run has no source message: its own nonce carries the call it closes.
         const callEndRun = run.trigger === "call_end";
         const callClientNonceForRun = callEndRun ? run.clientNonce : sourceClientNonce;
@@ -1281,6 +1286,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               ? [...(bot.disabledBuiltinTools ?? []), "handoff_to_bot"]
               : bot.disabledBuiltinTools,
             fleetManagement: bot.fleetManagement,
+            ownerRoutineRun,
             followUpFromUser: sourceMessage?.role === "user",
             userComputer: userComputer === "connected",
             userComputerScreen,
@@ -1328,8 +1334,19 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         // Outbound destinations this run may reach without asking. See outboundSiteGate and
         // connectorReadRequiresApproval; approvals from earlier attempts are read back from effects.
         const searchResultUrls = new Set<string>();
-        const initiallyTainted =
-          !ownerStartedRun || Boolean(turnCheckpoint) || Boolean(checkpointLoadError);
+        const restoredTurn = Boolean(turnCheckpoint) || Boolean(checkpointLoadError);
+        // Earlier messages are outside content unless the owner or one of their clean runs wrote
+        // them; an unwatched routine run treats any other history as already read.
+        const ownerHistory =
+          (ownerStartedRun || ownerRoutineRun) &&
+          !restoredTurn &&
+          (await ownerContentHistory(deps.prisma, run, messages));
+        const initialOutsideContent = restoredTurn || (ownerRoutineRun && !ownerHistory);
+        // An earlier attempt may have read anything before it stopped.
+        const ownerContentOnly = ownerHistory && !current.startedAt;
+        if (ownerContentOnly || run.ownerContentOnly)
+          await deps.prisma.run.updateMany({ where: { id: run.id }, data: { ownerContentOnly } });
+        const initiallyTainted = !ownerStartedRun || initialOutsideContent;
         // The creation intro only asks what the bot is for (see selectBuiltinToolsForRun),
         // so it gets no connector tools either.
         const tools =
@@ -1418,6 +1435,8 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           overLimitActionCalls: 0,
           toolResults: new Map(),
           tainted: initiallyTainted,
+          outsideContent: initialOutsideContent,
+          ownerContentOnly,
           ownerSettingsRefused: false,
           // A resumed turn replaces this with the baseline its saved prompt was built from.
           ownInstructionsBaseline: bot.instructions ?? "",
@@ -1455,6 +1474,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           secrets: runSecrets,
           source: {
             ownerStartedRun,
+            ownerRoutineRun,
             messagingChannelRun: nonOwnerChatRun,
             channelId,
             historySearchBeforeSeq,
@@ -1820,6 +1840,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                       )
                     : disabledBuiltinTools,
                 offeredFleetTools: offeredFleetTools(strategicBuiltins),
+                ownerRoutineRun,
                 followUpsOffered: followUpsOffered(strategicBuiltins, ownerStartedRun),
                 backgroundHelpersAllowed: backgroundHelpersAllowed({
                   threadBotId: thread.botId,

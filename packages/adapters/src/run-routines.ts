@@ -50,6 +50,22 @@ function routineNextRunIsNear(nextRunAt: Date | null, retryAt: number): boolean 
 }
 
 /**
+ * Whether a routine run queued now may manage other bots: a person saved the prompt it carries,
+ * here and not through a bot, and it runs as that person. promptByOwner always means the
+ * routine's current owner saved it: every write that hands a routine to someone else clears it
+ * unless that same write saves the prompt. runUserId differs from the owner only for a test run
+ * another member starts. A watch's note is outside content.
+ * Read under the routine's row lock, with the prompt the run takes.
+ */
+export function ownerRoutinePrompt(
+  routine: { promptByOwner: boolean; userId: string },
+  runUserId: string,
+  watchNote: boolean,
+): boolean {
+  return routine.promptByOwner && routine.userId === runUserId && !watchNote;
+}
+
+/**
  * Queue one later retry of a routine run that a transient model error stopped before it posted
  * a message or called a tool. Effects are keyed to their run, so a retry after either could
  * repeat them. Returns whether a retry was queued.
@@ -240,12 +256,20 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
     // the already-loaded list.
     const current = await tx.routine.findUnique({
       where: { id: routine.id },
-      select: { prompt: true, modelProvider: true, modelId: true, thinkingLevel: true },
+      select: {
+        prompt: true,
+        promptByOwner: true,
+        userId: true,
+        modelProvider: true,
+        modelId: true,
+        thinkingLevel: true,
+      },
     });
     if (!current) return null;
     const routinePrompt =
       expandSkillReferencesInPrompt(current.prompt, skillRecords) +
       (watchTick?.run ? watchTick.note : "");
+    const byOwner = ownerRoutinePrompt(current, routine.userId, Boolean(watchTick?.run));
     const timerTick = routine.watch == null && !isOneShotRoutineCrons(routine.crons);
     const timerNonce = timerTick ? routineTimerNonce(routine.id, scheduledFor) : undefined;
     if (timerNonce) {
@@ -256,6 +280,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
         userId: routine.userId,
         threadId: thread.id,
         prompt: routinePrompt,
+        ownerRoutinePrompt: byOwner,
         ...routineRunModelPin(current),
       });
       if (pending) return { ...pending, coalesced: true };
@@ -286,6 +311,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
         status: "queued",
         trigger: "routine",
         routineId: routine.id,
+        ownerRoutinePrompt: byOwner,
         clientNonce: timerNonce,
         ...routineRunModelPin(current),
       },
@@ -483,6 +509,8 @@ export async function retryRoutineRun(deps: ExecutorDeps, runId: string) {
           trigger: "routine",
           routineId: failed.routineId,
           retryOfRunId: failed.id,
+          // The retry carries the failed run's prompt, so it keeps that run's standing.
+          ownerRoutinePrompt: failed.ownerRoutinePrompt,
           ...(failed.modelPinned
             ? {
                 modelProvider: failed.modelProvider,

@@ -198,7 +198,7 @@ export function buildBotMessageWakePrompt(args: {
     intent === "result" || intent === "status"
       ? `This is a ${intent} for work you delegated. Relay it to the user now, and include the actual substance — the real names, dates, numbers, and details ${safeName} sent — not just a note that a ${intent} arrived. A reply like "the summary came through" or "it's done" without repeating what it says is not acceptable. Do not stay silent and do not merely acknowledge it.`
       : intent === "question"
-        ? `This is a question about delegated work. Answer it if you can, then continue the coordination and keep the user informed.`
+        ? `This is a question about delegated work. Answer it if you can, then continue the coordination and keep the user informed. When the answer depends on something your tools can check now, such as a website, an inbox or a file, check it first rather than answering from memory.`
         : intent === "fyi"
           ? "This is an FYI. If it changes the user's outcome, mention it; if there is genuinely nothing to do or report, staying silent is fine. Do not send an acknowledgement."
           : `This is a request. Complete it unless you believe its premise is wrong; then reply with your objection instead. Your final written response is automatically returned to ${safeName}; use message_bot with bot_id ${safeId} only for a useful interim question, status, or FYI. Sending does not end your turn: continue independent work after a useful update.`;

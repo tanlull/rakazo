@@ -1,0 +1,54 @@
+name: fork-publish-image
+
+# This fork's own deploys: every push to main publishes ghcr.io/<owner>/rakazo/app:edge and
+# sha-<commit>, and deploys the commit to the server, which builds and runs it from source
+# (infra/compose/deploy-source.sh) without waiting for the image. The upstream repository
+# publishes through ci.yml instead, so this never runs there.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-publish-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository != 'elie222/rakazo'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-server-image.yml
+
+  # The server's key for this job may only run its deploy script (a forced command), so the
+  # secret cannot open a shell there. Skips itself until the server secrets are set.
+  deploy:
+    if: github.repository != 'elie222/rakazo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "Deploy secrets are not set; skipping."
+            exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 "$DEPLOY_USER@$DEPLOY_HOST" "deploy ${{ github.sha }}"

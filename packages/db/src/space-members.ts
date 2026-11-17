@@ -588,6 +588,8 @@ async function departSpace(
               nextRunAt: null,
               watchState: Prisma.DbNull,
               accountFailures: 0,
+              // Someone else's prompt is not the new owner's words until they save it.
+              promptByOwner: false,
             },
           });
 

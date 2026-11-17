@@ -1,6 +1,11 @@
 import { ORPCError } from "@orpc/server";
 import { routineWakeupJob } from "@rakazo/adapter-kit";
-import { parseRoutineWatch, parseRoutineWatchState, routineRunModelPin } from "@rakazo/adapters";
+import {
+  ownerRoutinePrompt,
+  parseRoutineWatch,
+  parseRoutineWatchState,
+  routineRunModelPin,
+} from "@rakazo/adapters";
 import type { Actor, CreateRoutineInput, Routine } from "@rakazo/contracts";
 import { canonicalPiProviderId, RoutineEmailSendersSchema } from "@rakazo/contracts";
 import {
@@ -203,9 +208,19 @@ export async function createRoutineTestRun(
   });
   const currentModel = await tx.routine.findUnique({
     where: { id: routine.id },
-    select: { modelProvider: true, modelId: true, thinkingLevel: true },
+    select: {
+      modelProvider: true,
+      modelId: true,
+      thinkingLevel: true,
+      prompt: true,
+      promptByOwner: true,
+      userId: true,
+    },
   });
   if (!currentModel) throw new IsolationError();
+  // The prompt this run carries was read before the transaction; an edit since loses the standing.
+  const byOwner =
+    currentModel.prompt === routine.prompt && ownerRoutinePrompt(currentModel, actor.userId, false);
   return tx.run.create({
     data: {
       spaceId: actor.spaceId,
@@ -216,6 +231,7 @@ export async function createRoutineTestRun(
       status: "queued",
       trigger: "routine",
       routineId: routine.id,
+      ownerRoutinePrompt: byOwner,
       ...routineRunModelPin(currentModel),
       clientNonce: nonce,
     },

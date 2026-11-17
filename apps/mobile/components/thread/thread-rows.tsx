@@ -48,7 +48,8 @@ export function useLatestRowActions(current: MessageRowActions): MessageRowActio
       answer: (message, answer, fields, dismiss, remember) =>
         rowActionsRef.current.answer(message, answer, fields, dismiss, remember),
       openBot: (id, name) => rowActionsRef.current.openBot(id, name),
-      openComputer: (id, name) => rowActionsRef.current.openComputer(id, name),
+      openComputer: (id, name, takeControl) =>
+        rowActionsRef.current.openComputer(id, name, takeControl),
       previewFile: (artifactId) => rowActionsRef.current.previewFile(artifactId),
       previewImage: (target) => rowActionsRef.current.previewImage(target),
       jump: (id) => rowActionsRef.current.jump(id),

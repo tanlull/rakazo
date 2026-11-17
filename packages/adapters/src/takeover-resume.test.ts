@@ -7,7 +7,7 @@ import {
 } from "./takeover-resume.js";
 
 const HANDED_BACK_NOTE =
-  "The user handed the computer back. Continue using the current screen state. Do not request takeover again for this same step.";
+  "The user handed the computer back. Look at the screen first, then carry on with the user's original request without asking them to confirm in chat. Do not request takeover again for this same step; if it still is not done, say exactly what is missing.";
 const UNFINISHED_NOTE =
   "The takeover ended without the user completing it. Continue without assuming that step was done. Do not request takeover again for this same step unless you still cannot proceed.";
 

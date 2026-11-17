@@ -188,6 +188,13 @@ export interface RunState {
    */
   tainted: boolean;
   /**
+   * Whether outside content has entered the run, whoever started it: set with `tainted` by
+   * tool results, outside messages and restored attempts, but not by the run's trigger alone.
+   */
+  outsideContent: boolean;
+  /** This run is recorded as having seen only its owner's words (see Run.ownerContentOnly). */
+  ownerContentOnly?: boolean;
+  /**
    * The taint refusal for owner settings was returned in this attempt. A model that calls
    * again gets the turn ended instead of the same error a second time.
    */
@@ -233,6 +240,8 @@ export interface RunComputerContext {
 
 export interface RunSource {
   ownerStartedRun: boolean;
+  /** A routine run whose prompt its owner wrote (see ownerRoutinePrompt); it may manage bots. */
+  ownerRoutineRun?: boolean;
   messagingChannelRun: boolean;
   channelId: string | undefined;
   historySearchBeforeSeq: number;
@@ -385,14 +394,92 @@ export function refuseOwnerSettingsChange(
 }
 
 export async function isRunTainted(ctx: RunContext) {
+  if (ctx.state.tainted) return true;
+  if (await outsideContentEntered(ctx)) ctx.state.tainted = true;
+  return ctx.state.tainted;
+}
+
+/** Whether outside content entered this run, ignoring who started it (see RunState.tainted). */
+export async function outsideContentEntered(ctx: RunContext) {
   const { state } = ctx;
-  if (state.tainted) return true;
+  if (state.outsideContent) return true;
   state.earlierAttempt ??= ctx.deps.prisma.attempt
     .count({ where: { runId: ctx.runId } })
     .then((count) => count > 1);
   if ((await state.earlierAttempt) || (await ctx.trust.receivedOutsideMessage()))
-    state.tainted = true;
-  return state.tainted;
+    await markOutsideContent(ctx);
+  return state.outsideContent;
+}
+
+export async function markOutsideContent(
+  ctx: Pick<RunContext, "deps" | "runId"> & {
+    state: Pick<RunState, "tainted" | "outsideContent" | "ownerContentOnly">;
+  },
+) {
+  ctx.state.tainted = true;
+  ctx.state.outsideContent = true;
+  if (!ctx.state.ownerContentOnly) return;
+  // From now on later runs read this run's messages as outside content (see ownerContentHistory).
+  ctx.state.ownerContentOnly = false;
+  await ctx.deps.prisma.run.updateMany({
+    where: { id: ctx.runId },
+    data: { ownerContentOnly: false },
+  });
+}
+
+type HistoryMessage = {
+  id: string;
+  role: string;
+  runId: string | null;
+  authorUserId: string | null;
+  replyToMessageId: string | null;
+};
+
+/**
+ * Whether a run's history, quoted replies included, holds only its owner's words: their own
+ * messages and replies from their runs that had seen nothing else. An earlier run that read a
+ * web page can repeat it in a reply, so that reply is outside content for the runs after it.
+ */
+export async function ownerContentHistory(
+  prisma: ExecutorDeps["prisma"],
+  run: { id: string; userId: string },
+  history: readonly HistoryMessage[],
+): Promise<boolean> {
+  const loaded = new Set(history.map((message) => message.id));
+  const quoted = [
+    ...new Set(
+      history.flatMap((message) =>
+        message.replyToMessageId && !loaded.has(message.replyToMessageId)
+          ? [message.replyToMessageId]
+          : [],
+      ),
+    ),
+  ];
+  const messages = quoted.length
+    ? [
+        ...history,
+        ...(await prisma.message.findMany({
+          where: { id: { in: quoted } },
+          select: { id: true, role: true, runId: true, authorUserId: true, replyToMessageId: true },
+        })),
+      ]
+    : history;
+  if (messages.length < loaded.size + quoted.length) return false;
+  const earlierRunIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "user" && message.authorUserId === run.userId) continue;
+    if (message.role === "bot" && message.runId) {
+      if (message.runId !== run.id) earlierRunIds.add(message.runId);
+      continue;
+    }
+    return false;
+  }
+  if (earlierRunIds.size === 0) return true;
+  const clean = await prisma.run.findMany({
+    where: { id: { in: [...earlierRunIds] }, userId: run.userId, ownerContentOnly: true },
+    select: { id: true },
+  });
+  return clean.length === earlierRunIds.size;
 }
 
 /** A change landed after this attempt's snapshot; only a fresh run can apply the rewrite. */

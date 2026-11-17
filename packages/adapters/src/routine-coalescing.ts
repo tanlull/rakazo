@@ -30,6 +30,8 @@ export async function findPendingRoutineTick(
     userId: string;
     threadId: string;
     prompt: string;
+    /** The standing a new run would get; a pending one with another standing stays apart. */
+    ownerRoutinePrompt?: boolean;
     modelProvider?: string;
     modelId?: string;
     thinkingLevel?: string | null;
@@ -46,6 +48,7 @@ export async function findPendingRoutineTick(
     userId: config.userId,
     threadId: config.threadId,
     trigger: "routine",
+    ownerRoutinePrompt: config.ownerRoutinePrompt ?? false,
     status: "queued",
     retryOfRunId: null,
     sourceMessageId: null,

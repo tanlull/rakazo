@@ -1144,8 +1144,23 @@ describe("updateScheduleFromTool", () => {
         id: "routine-1",
         bot: { archivedAt: null },
       },
-      data: { userId: "user-2", watchState: Prisma.DbNull, prompt: "Order less" },
+      data: {
+        userId: "user-2",
+        watchState: Prisma.DbNull,
+        prompt: "Order less",
+        promptByOwner: false,
+      },
     });
+  });
+
+  it("drops the owner's standing when it takes over without a new prompt", async () => {
+    const { updateMany, update } = setup();
+    await expect(update({ userId: "user-2", name: "Shop" })).resolves.toMatchObject({ ok: true });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { userId: "user-2", watchState: Prisma.DbNull, promptByOwner: false, name: "Shop" },
+      }),
+    );
   });
 
   it("edits the prompt in place and keeps the timing", async () => {
@@ -1172,8 +1187,8 @@ describe("updateScheduleFromTool", () => {
         id: "routine-1",
         bot: { archivedAt: null },
       },
-      // Only the prompt, so a run claimed meanwhile keeps its advance.
-      data: { prompt },
+      // Only the prompt, so a run claimed meanwhile keeps its advance. A bot wrote it.
+      data: { prompt, promptByOwner: false },
     });
     expect(enqueue).not.toHaveBeenCalled();
     expect(append).toHaveBeenCalledWith(

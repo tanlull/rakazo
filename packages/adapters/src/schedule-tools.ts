@@ -944,9 +944,10 @@ export async function updateScheduleFromTool(
       // starts a fresh baseline from the new owner's accounts.
       ...(existing.userId === input.userId
         ? {}
-        : { userId: input.userId, watchState: Prisma.DbNull }),
+        : { userId: input.userId, watchState: Prisma.DbNull, promptByOwner: false }),
       ...(name === undefined ? {} : { name }),
-      ...(prompt === undefined ? {} : { prompt }),
+      // A bot-written prompt no longer counts as the owner's.
+      ...(prompt === undefined ? {} : { prompt, promptByOwner: false }),
       ...(timingChanged ? { crons, timezone, active, nextRunAt } : {}),
     },
   });
