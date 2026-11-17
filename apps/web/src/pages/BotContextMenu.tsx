@@ -62,7 +62,8 @@ export function BotContextMenu({
   onDuplicate: () => void;
   onClear: () => void;
   onArchive: () => void;
-  onDelete: () => void;
+  /** Absent for a chat that can't be deleted, such as the main bot. */
+  onDelete?: () => void;
 }) {
   const { t, i18n } = useLingui();
   const presetLabels: Record<SnoozePreset, string> = {
@@ -167,10 +168,12 @@ export function BotContextMenu({
         <Archive />
         {t`Archive`}
       </ContextMenuItem>
-      <ContextMenuItem variant="destructive" onClick={onDelete}>
-        <Trash2 />
-        {t`Delete`}
-      </ContextMenuItem>
+      {onDelete ? (
+        <ContextMenuItem variant="destructive" onClick={onDelete}>
+          <Trash2 />
+          {t`Delete`}
+        </ContextMenuItem>
+      ) : null}
     </ContextMenuContent>
   );
 }

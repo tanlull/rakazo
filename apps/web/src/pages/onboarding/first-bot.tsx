@@ -1,9 +1,10 @@
 import { Trans } from "@lingui/react/macro";
+import { MAIN_BOT_INSTRUCTIONS, MAIN_BOT_NAME, MAIN_BOT_SPAWN_KEY } from "@rakazo/contracts";
 import { Button } from "@rakazo/ui-web";
 import { rpc } from "../../lib/rpc";
 
-const FIRST_BOT_NAME = "Chief";
-const FIRST_BOT_SPAWN_KEY = "onboarding:first";
+/** First bots made before the spawn key existed. */
+const LEGACY_FIRST_BOT_NAME = "Chief";
 const FIRST_BOT_LOCK = "rakazo:onboarding-first-bot";
 
 /** Survives StrictMode remounts; concurrent first-bot creates share one in-flight attempt. */
@@ -12,10 +13,10 @@ let firstBotEnsure: Promise<{ id: string }> | null = null;
 function findFirstBot(
   bots: Array<{ id: string; name: string; spawnKey: string | null }>,
 ): { id: string } | undefined {
-  const bySpawnKey = bots.find((bot) => bot.spawnKey === FIRST_BOT_SPAWN_KEY);
+  const bySpawnKey = bots.find((bot) => bot.spawnKey === MAIN_BOT_SPAWN_KEY);
   if (bySpawnKey) return { id: bySpawnKey.id };
   // Legacy first-run Chief created before spawnKey was set.
-  const byName = bots.find((bot) => bot.name === FIRST_BOT_NAME);
+  const byName = bots.find((bot) => bot.name === LEGACY_FIRST_BOT_NAME);
   return byName ? { id: byName.id } : undefined;
 }
 
@@ -25,17 +26,17 @@ async function createOrReuseFirstBot(): Promise<{ id: string }> {
   if (reuse) return reuse;
   try {
     const created = await rpc.bots.create({
-      name: FIRST_BOT_NAME,
+      name: MAIN_BOT_NAME,
       description: "",
-      instructions: "",
+      instructions: MAIN_BOT_INSTRUCTIONS,
       notifyOnFinish: true,
-      spawnKey: FIRST_BOT_SPAWN_KEY,
+      spawnKey: MAIN_BOT_SPAWN_KEY,
     });
     return { id: created.id };
   } catch (error) {
     // Another tab won the unique (spaceId, spawnKey) race; reuse that bot only.
     const afterConflict = await rpc.bots.list();
-    const winner = afterConflict.find((bot) => bot.spawnKey === FIRST_BOT_SPAWN_KEY);
+    const winner = afterConflict.find((bot) => bot.spawnKey === MAIN_BOT_SPAWN_KEY);
     if (winner) return { id: winner.id };
     throw error;
   }
