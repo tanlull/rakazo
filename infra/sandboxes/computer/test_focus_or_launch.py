@@ -630,6 +630,37 @@ class ControlArgvTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], control.FOCUS_COMPLETION_SEC)
         self.assertGreater(control.FOCUS_COMPLETION_SEC, control.LAUNCH_SPAWN_POLL_SEC)
 
+    def test_typed_text_is_pasted_through_both_selections(self):
+        text = "สวัสดีครับ\nบรรทัดสอง"
+        argv = ["env", "DISPLAY=:2", "xdotool", "type", "--clearmodifiers", "--", text]
+        with patch.object(
+            control.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)
+        ) as run:
+            control.run_control_argv(argv, ":2")
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            calls,
+            [
+                ["xclip", "-selection", "clipboard", "-i"],
+                ["xclip", "-selection", "primary", "-i"],
+                ["xdotool", "key", "--clearmodifiers", "shift+Insert"],
+            ],
+        )
+        self.assertEqual(run.call_args_list[0].kwargs["input"], text.encode())
+        self.assertEqual(run.call_args_list[0].kwargs["env"]["DISPLAY"], ":2")
+
+    def test_typed_text_falls_back_to_xdotool_without_xclip(self):
+        argv = ["env", "DISPLAY=:1", "xdotool", "type", "--clearmodifiers", "--", "hello"]
+
+        def run(command, **kwargs):
+            if command[0] == "xclip":
+                raise FileNotFoundError(command[0])
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(control.subprocess, "run", side_effect=run) as mocked:
+            control.run_control_argv(argv, ":1")
+        self.assertEqual(mocked.call_args.args[0], argv)
+
     def test_slow_focus_is_not_reported_before_the_wrapper_exits(self):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "rakazo-focus-or-launch"

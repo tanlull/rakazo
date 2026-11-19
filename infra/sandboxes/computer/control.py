@@ -264,9 +264,50 @@ def launch_spawn_poll_sec(argv):
     return LAUNCH_SPAWN_POLL_SEC
 
 
+def paste_text(text, env):
+    """Paste text through the X selections; False when xclip cannot hold them.
+
+    xdotool type remaps a spare keycode for every character outside the keymap, and
+    Chromium misses or misreads some of them, so Thai and other non-Latin text arrived
+    with letters missing. Each newline it typed was also Return, which sends a chat
+    message early. Shift+Insert pastes CLIPBOARD in browsers and PRIMARY in xterm, so
+    both get the text.
+    """
+    data = text.encode()
+    for selection in ("clipboard", "primary"):
+        try:
+            # xclip forks a child that serves the selection until something else takes it.
+            result = subprocess.run(
+                ["xclip", "-selection", selection, "-i"],
+                input=data,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=CONTROL_TIMEOUT_SEC,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode:
+            return False
+    try:
+        result = subprocess.run(
+            ["xdotool", "key", "--clearmodifiers", "shift+Insert"],
+            env=env,
+            timeout=CONTROL_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("computer action timed out") from error
+    if result.returncode:
+        raise RuntimeError("computer action failed")
+    return True
+
+
 def run_control_argv(argv, display):
     """Run a fallback control command without holding the lock forever."""
     env = child_env(display)
+    index = control_command_index(argv)
+    if argv[index : index + 2] == ["xdotool", "type"] and paste_text(argv[-1], env):
+        return
     if argv[control_command_index(argv)] == FOCUS_OR_LAUNCH:
         try:
             result = subprocess.run(argv, env=env, timeout=FOCUS_COMPLETION_SEC)
