@@ -17,11 +17,13 @@ Docker computer topology:
 
 | Variable                     | Default | Accepts                                                                                              |
 | ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
-| `RAKAZO_COMPUTER_MEMORY`     | `2g`    | `2g`, `1536m`, a byte count. Minimum `6m`, Docker's own floor. Also caps swap, so the ceiling holds. |
+| `RAKAZO_COMPUTER_MEMORY`     | `4g`    | `4g`, `1536m`, a byte count. Minimum `6m`, Docker's own floor. Also caps swap, so the ceiling holds. |
+| `RAKAZO_COMPUTER_SHM_SIZE`   | `1g`    | `/dev/shm` size, same syntax as memory. Minimum `6m`.                                                |
 | `RAKAZO_COMPUTER_CPUS`       | `2`     | Whole or fractional cores, e.g. `1.5`                                                                |
 | `RAKAZO_COMPUTER_PIDS_LIMIT` | `2048`  | A positive integer                                                                                   |
 
-Set any of them to `0`, `none` or `unlimited` to remove that ceiling. A malformed value fails the
+Set any of them to `0`, `none` or `unlimited` to remove that ceiling. For shared memory, Docker
+then uses its 64 MiB `/dev/shm` default rather than an uncapped mount. A malformed value fails the
 supervisor at startup naming the variable, rather than surfacing later as a failed bot.
 
 Two caps bound how many computers exist. `SANDBOX_MAX_COMPUTERS_PER_USER` caps the computers one

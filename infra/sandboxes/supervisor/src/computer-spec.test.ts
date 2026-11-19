@@ -141,7 +141,7 @@ describe("graphical computer spec", () => {
     expect(options.HostConfig.PortBindings).not.toHaveProperty("6082/tcp");
     expect(screenPorts(0)).toMatchObject({ display: ":1", viewPort: "6080", controlPort: "6080" });
     expect(screenPorts(1)).toMatchObject({ display: ":2", viewPort: "6080", controlPort: "6080" });
-    expect(options.HostConfig.ShmSize).toBeGreaterThanOrEqual(256 * 1024 * 1024);
+    expect(options.HostConfig.ShmSize).toBe(1024 ** 3);
     expect(options.User).toBe("1000:1000");
     expect(options.HostConfig.CapDrop).toEqual(["ALL"]);
     expect(options.HostConfig.SecurityOpt).toEqual(["no-new-privileges:true"]);
@@ -2181,6 +2181,7 @@ describe("computer resource limits", () => {
     "RAKAZO_COMPUTER_MEMORY",
     "RAKAZO_COMPUTER_CPUS",
     "RAKAZO_COMPUTER_PIDS_LIMIT",
+    "RAKAZO_COMPUTER_SHM_SIZE",
   ] as const;
   const saved = new Map<string, string | undefined>();
 
@@ -2208,10 +2209,11 @@ describe("computer resource limits", () => {
 
   it("caps memory and cpu by default and keeps #343's pids ceiling", () => {
     const { HostConfig } = containerCreateOptions(createInput);
-    expect(HostConfig.Memory).toBe(2 * 1024 ** 3);
+    expect(HostConfig.Memory).toBe(4 * 1024 ** 3);
     expect(HostConfig.MemorySwap).toBe(HostConfig.Memory);
     expect(HostConfig.NanoCpus).toBe(2 * 1e9);
     expect(HostConfig.PidsLimit).toBe(2048);
+    expect(HostConfig.ShmSize).toBe(1024 ** 3);
   });
 
   it("falls back to the defaults when a variable is blank", () => {
@@ -2219,10 +2221,12 @@ describe("computer resource limits", () => {
     process.env.RAKAZO_COMPUTER_MEMORY = "";
     process.env.RAKAZO_COMPUTER_CPUS = "  ";
     process.env.RAKAZO_COMPUTER_PIDS_LIMIT = "";
+    process.env.RAKAZO_COMPUTER_SHM_SIZE = "  ";
     const { HostConfig } = containerCreateOptions(createInput);
-    expect(HostConfig.Memory).toBe(2 * 1024 ** 3);
+    expect(HostConfig.Memory).toBe(4 * 1024 ** 3);
     expect(HostConfig.NanoCpus).toBe(2e9);
     expect(HostConfig.PidsLimit).toBe(2048);
+    expect(HostConfig.ShmSize).toBe(1024 ** 3);
   });
 
   it("pins MemorySwap to Memory so the ceiling cannot be swapped past", () => {
@@ -2291,6 +2295,31 @@ describe("computer resource limits", () => {
 
   it("parses byte counts without a unit suffix", () => {
     expect(parseMemoryBytes("X", "1073741824")).toBe(1024 ** 3);
+  });
+
+  it("sizes /dev/shm from RAKAZO_COMPUTER_SHM_SIZE", () => {
+    process.env.RAKAZO_COMPUTER_SHM_SIZE = "512m";
+    expect(containerCreateOptions(createInput).HostConfig.ShmSize).toBe(512 * 1024 ** 2);
+  });
+
+  it("accepts the same unlimited values as the memory parser", () => {
+    // parseMemoryBytes maps these to 0. Docker then uses its 64 MiB /dev/shm default.
+    for (const value of ["0", "unlimited", "none"]) {
+      process.env.RAKAZO_COMPUTER_SHM_SIZE = value;
+      expect(containerCreateOptions(createInput).HostConfig.ShmSize).toBe(0);
+    }
+  });
+
+  it("rejects a malformed shared-memory size", () => {
+    process.env.RAKAZO_COMPUTER_SHM_SIZE = "1 gig";
+    expect(() => containerCreateOptions(createInput)).toThrow(/RAKAZO_COMPUTER_SHM_SIZE/);
+  });
+
+  it("rejects shared memory below Docker's 6 MiB minimum", () => {
+    process.env.RAKAZO_COMPUTER_SHM_SIZE = "5m";
+    expect(() => containerCreateOptions(createInput)).toThrow(/RAKAZO_COMPUTER_SHM_SIZE/);
+    process.env.RAKAZO_COMPUTER_SHM_SIZE = "6m";
+    expect(containerCreateOptions(createInput).HostConfig.ShmSize).toBe(6 * 1024 ** 2);
   });
 });
 
