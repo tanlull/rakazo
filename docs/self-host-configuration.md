@@ -65,6 +65,13 @@ screen lasts before control expires.
 `MODEL_STREAM_MAX_RETRIES` (0 to 5, default `1`) retries a model stream that fails partway; more
 retries let long turns survive brief provider failures.
 
+`RAKAZO_MODEL_TRANSIENT_RETRIES` (0 to 5, default `3`) is how many extra times to repeat one model
+call after a transient failure, such as a dropped stream (`terminated`), a connection reset, HTTP
+429 or a 5xx response. Backoff is 2 seconds, then 8, then 20. Invalid or blank values use `3`.
+Auth failures, invalid requests and an exhausted quota are not retried. Each retry is that same
+call: tool calls that already finished are not run again, and reply text the user already saw is
+not started over. Set `0` to fail the run on the first transient error.
+
 Model timeouts are configurable in milliseconds. Invalid or out-of-range values retain their
 defaults. Longer timeouts can help when several bots share a local inference server that queues
 requests. For `RAKAZO_LOCAL_MODELS` servers and compatible model connections added in the app,
@@ -73,8 +80,8 @@ run's error details, such as `terminated (other side closed)`. Built-in provider
 response after 5 minutes without data, and a proxy or load balancer in between may cut off a
 silent stream sooner.
 
-- `MODEL_STREAM_TIMEOUT_MS` (default `120000`, range `1000`–`2147483647`) is the time budget
-  for retrying the same model. It also controls the wait for response headers when using the
+- `MODEL_STREAM_TIMEOUT_MS` (default `120000`, range `1000`–`2147483647`) is the wait for
+  response headers on each attempt when using the
   OpenAI Chat Completions, Responses or Codex API, Anthropic Messages, Mistral or Azure OpenAI.
   Other APIs, such as Google, Vertex AI, Bedrock and some routed models, use their own client
   timeouts.

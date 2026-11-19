@@ -36,6 +36,7 @@ import { assistantText, messageHasToolCall, sanitizeProviderError } from "./pi-r
 import {
   effectiveOutputReserve,
   modelStreamTimeoutMs,
+  modelTransientRetries,
   operatorMaxTokens,
   resolveCompletionMaxTokens,
 } from "./pi-runtime-limits.js";
@@ -50,7 +51,6 @@ import {
   thinkingLevelFor,
   withOutputBudget,
 } from "./pi-runtime-models.js";
-import { MODEL_STREAM_IDLE_TIMEOUT_MESSAGE } from "./pi-runtime-stream.js";
 import { reportedContextWindow } from "./reported-context-window.js";
 import {
   isThinkingSignatureMismatch,
@@ -59,6 +59,13 @@ import {
 } from "./thinking-signatures.js";
 
 const MODEL_PROVIDER_RETRY_DELAYS_MS = [2_000, 8_000, 20_000] as const;
+
+/** Backoff before the next same-model attempt. Further retries keep the last delay. */
+function transientRetryDelayMs(retryIndex: number): number {
+  return MODEL_PROVIDER_RETRY_DELAYS_MS[
+    Math.min(retryIndex, MODEL_PROVIDER_RETRY_DELAYS_MS.length - 1)
+  ]!;
+}
 
 /** Why a reply ended before the model finished it. */
 export type CutReplyReason = "connection" | "limit";
@@ -120,15 +127,29 @@ function assistantHasVisibleOutput(message: AssistantMessage): boolean {
   );
 }
 
+/** A dropped socket. Any tool call already in that message has not run. */
+function isTransportDrop(message: string | undefined): boolean {
+  return /\bterminated\b|\beconnreset\b|socket hang up|\bfetch failed\b/i.test(message ?? "");
+}
+
+/**
+ * Reply text the caller has already been given. A tool call still being written is not
+ * included: it has not run, so it stays buffered until the message completes and a dropped
+ * connection can discard it and repeat the call.
+ */
 function eventHasVisibleOutput(event: AssistantMessageEvent): boolean {
-  if (event.type === "toolcall_start" || event.type === "toolcall_end") return true;
-  if (event.type === "text_delta" || event.type === "toolcall_delta") {
-    if (event.delta.length > 0) return true;
+  if (
+    event.type === "toolcall_start" ||
+    event.type === "toolcall_delta" ||
+    event.type === "toolcall_end"
+  ) {
+    return false;
   }
+  if (event.type === "text_delta" && event.delta.length > 0) return true;
   if (event.type === "text_end" && event.content.length > 0) return true;
-  if (event.type === "done") return assistantHasVisibleOutput(event.message);
-  if (event.type === "error") return assistantHasVisibleOutput(event.error);
-  return assistantHasVisibleOutput(event.partial);
+  if (event.type === "done") return assistantText(event.message).length > 0;
+  if (event.type === "error") return assistantText(event.error).length > 0;
+  return assistantText(event.partial).length > 0;
 }
 
 export const MAX_SELF_RECOVERIES_PER_RUN = 3;
@@ -444,12 +465,24 @@ export function fallbackAwareModelStream(
   const run = async () => {
     let buffered: AssistantMessageEvent[] = [];
     let retries = 0;
-    let recoveredIdle = false;
     let sizingFailure: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
-    // Bound same-model retries. Explicit backups retain their per-model header
-    // timeout: a post-header idle watchdog can already exceed that timeout.
+    // The header timeout bounds time-to-headers and context-sizing retries. A transient
+    // failure after the body has already been open (a long generation, then "terminated")
+    // gets its own attempts and a fresh header budget; that wait is not the retry budget.
     let startedAt = Date.now();
     const timeoutMs = options?.timeoutMs ?? modelStreamTimeoutMs();
+    const transientRetries = modelTransientRetries();
+    /** Repeat this call after a transient failure. Resets the header budget for the next attempt. */
+    const retryTransient = async (): Promise<boolean> => {
+      if (retries >= transientRetries || signalAborted()) return false;
+      const delay = transientRetryDelayMs(retries);
+      retries += 1;
+      await abortableDelay(delay, signal);
+      if (signalAborted()) return false;
+      startedAt = Date.now();
+      buffered = [];
+      return true;
+    };
     let firstRetryableError: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
     // Set once this call has been repeated after spending its output budget on nothing visible.
     let lengthRecovered = false;
@@ -516,6 +549,8 @@ export function fallbackAwareModelStream(
               : attemptOptions,
         );
       } catch (error) {
+        if (!sawVisibleOutput && isTransientModelError(error) && (await retryTransient())) continue;
+        if (failIfAborted(target)) return;
         finishWithThrownError(target, error);
         return;
       }
@@ -525,10 +560,17 @@ export function fallbackAwareModelStream(
             recordFailure(target, event.error.errorMessage ?? "Model request failed.");
             let terminalEvent = event;
             let requestLimitTooSmall = false;
+            // Reply text stays with this attempt so it is not written twice. A dropped
+            // socket whose message holds only a tool call can be repeated: that call never ran.
+            // Streamed tool-call events stay buffered until the message completes.
             const hasTerminalVisibleOutput = assistantHasVisibleOutput(event.error);
-            if (
+            const replayable =
               !sawVisibleOutput &&
-              !hasTerminalVisibleOutput &&
+              (!hasTerminalVisibleOutput ||
+                (isTransportDrop(event.error.errorMessage) &&
+                  assistantText(event.error).length === 0));
+            if (
+              replayable &&
               event.reason === "error" &&
               !signalAborted() &&
               !sizingFailure &&
@@ -602,11 +644,7 @@ export function fallbackAwareModelStream(
               }
             }
             const narrowedThinking =
-              !sawVisibleOutput &&
-              !hasTerminalVisibleOutput &&
-              event.reason === "error" &&
-              !signalAborted() &&
-              !thinkingLevelMap
+              replayable && event.reason === "error" && !signalAborted() && !thinkingLevelMap
                 ? acceptedReasoningEfforts(target.model, event.error.errorMessage)
                 : undefined;
             if (narrowedThinking) {
@@ -617,8 +655,7 @@ export function fallbackAwareModelStream(
               break;
             }
             if (
-              !sawVisibleOutput &&
-              !hasTerminalVisibleOutput &&
+              replayable &&
               event.reason === "error" &&
               !signalAborted() &&
               !state.dropThinkingBlocks &&
@@ -631,8 +668,7 @@ export function fallbackAwareModelStream(
               break;
             }
             if (
-              !sawVisibleOutput &&
-              !hasTerminalVisibleOutput &&
+              replayable &&
               event.reason === "error" &&
               !signalAborted() &&
               state.isProviderFailure(event.error) &&
@@ -658,32 +694,15 @@ export function fallbackAwareModelStream(
                 break;
               }
               // An exhausted quota, usage window or rejected credential can move to a backup
-              // but will not clear within the retry budget, so only transient failures retry the same model.
+              // but will not clear on another try, so only transient failures retry the same model.
+              // Completed tool results stay in the context, so they are not run again.
               if (isTransientModelError(event.error)) {
                 firstRetryableError ??= event;
-                const idle = event.error.errorMessage === MODEL_STREAM_IDLE_TIMEOUT_MESSAGE;
-                const delay = idle
-                  ? recoveredIdle
-                    ? undefined
-                    : MODEL_PROVIDER_RETRY_DELAYS_MS[0]
-                  : MODEL_PROVIDER_RETRY_DELAYS_MS[retries];
-                if (idle && delay !== undefined) {
-                  // The post-header idle bound can outlast the header retry window.
-                  // Renew it once for this empty call, retaining completed tool results.
-                  recoveredIdle = true;
-                  startedAt = Date.now();
+                if (await retryTransient()) {
+                  restart = true;
+                  break;
                 }
-                // Ordinary failures and backoff share the remaining retry window.
-                if (delay !== undefined && Date.now() - startedAt + delay < timeoutMs) {
-                  retries += 1;
-                  await abortableDelay(delay, signal);
-                  if (failIfAborted(target)) return;
-                  if (Date.now() - startedAt < timeoutMs) {
-                    buffered = [];
-                    restart = true;
-                    break;
-                  }
-                }
+                if (failIfAborted(target)) return;
                 terminalEvent = firstRetryableError;
               }
             }
@@ -844,6 +863,10 @@ export function fallbackAwareModelStream(
           }
         }
       } catch (error) {
+        // A transport throw ("terminated", ECONNRESET) is the same failure as an error event
+        // when nothing has been shown yet. Reply text already forwarded is not repeated.
+        if (!sawVisibleOutput && isTransientModelError(error) && (await retryTransient())) continue;
+        if (failIfAborted(target)) return;
         for (const pending of buffered) output.push(pending);
         finishWithThrownError(target, error);
         return;
